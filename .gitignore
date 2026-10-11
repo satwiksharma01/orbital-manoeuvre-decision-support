@@ -1,0 +1,16 @@
+# Course submission files (form answers, upload bundles, raw screenshots)
+submission/
+
+# MATLAB / Simulink build artefacts
+*.asv
+*.slxc
+slprj/
+*.autosave
+
+# Python
+__pycache__/
+*.pyc
+
+# Course documents (report, video script) are kept out of the public repo
+docs/
+python/build_pdfs.py
