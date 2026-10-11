@@ -1,0 +1,1015 @@
+<title>Orbital Manoeuvre Planner</title>
+<style>
+/* Layout: translucent toolbar with example missions; inset-grouped mission inputs on the
+   left (sticky on tall screens); results on the right in order of importance:
+   verdict, trade space + transfer geometry, ranking, rule-based reasoning. */
+:root {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --fill: rgba(120, 120, 128, 0.12);
+  --fill-2: rgba(120, 120, 128, 0.07);
+  --label: #1d1d1f;
+  --label-2: #6e6e73;
+  --label-3: #86868b;
+  --sep: rgba(60, 60, 67, 0.13);
+  --accent: #0071e3;
+  --accent-text: #0066cc;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(0, 113, 227, 0.09);
+  --good: #248a3d;
+  --good-soft: rgba(36, 138, 61, 0.11);
+  --warn: #b25000;
+  --warn-soft: rgba(255, 149, 0, 0.14);
+  --bad: #d70015;
+  --bad-soft: rgba(215, 0, 21, 0.08);
+  --material: rgba(245, 245, 247, 0.74);
+  --seg-pill: #ffffff;
+  --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  --thumb: #ffffff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 20px rgba(0, 0, 0, 0.045);
+  --earth: #a9cbf3;
+  --orbit: #aeaeb2;
+  --grid: rgba(60, 60, 67, 0.09);
+  --tip-bg: rgba(29, 29, 31, 0.92);
+  --tip-ink: #f5f5f7;
+  --s-hohmann: #2a78d6;
+  --s-hohmann_split: #eb6834;
+  --s-bielliptic: #1baf7a;
+  --s-one_tangent: #eda100;
+  --s-low_thrust: #e87ba4;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --r-lg: 20px;
+  --r-md: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --surface: #1c1c1e; --fill: rgba(118, 118, 128, 0.24); --fill-2: rgba(118, 118, 128, 0.14);
+    --label: #f5f5f7; --label-2: #a1a1a6; --label-3: #8e8e93; --sep: rgba(84, 84, 88, 0.5);
+    --accent: #0a84ff; --accent-text: #2997ff; --accent-ink: #ffffff; --accent-soft: rgba(10, 132, 255, 0.18);
+    --good: #30d158; --good-soft: rgba(48, 209, 88, 0.15); --warn: #ff9f0a; --warn-soft: rgba(255, 159, 10, 0.16);
+    --bad: #ff453a; --bad-soft: rgba(255, 69, 58, 0.15);
+    --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
+    --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000; --surface: #1c1c1e; --fill: rgba(118, 118, 128, 0.24); --fill-2: rgba(118, 118, 128, 0.14);
+  --label: #f5f5f7; --label-2: #a1a1a6; --label-3: #8e8e93; --sep: rgba(84, 84, 88, 0.5);
+  --accent: #0a84ff; --accent-text: #2997ff; --accent-ink: #ffffff; --accent-soft: rgba(10, 132, 255, 0.18);
+  --good: #30d158; --good-soft: rgba(48, 209, 88, 0.15); --warn: #ff9f0a; --warn-soft: rgba(255, 159, 10, 0.16);
+  --bad: #ff453a; --bad-soft: rgba(255, 69, 58, 0.15);
+  --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
+  --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--label); font: 15px/1.47 var(--font); letter-spacing: -0.008em; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- toolbar (translucent material, scroll-edge hairline) ---------- */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; background: var(--material);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid transparent; transition: border-color 0.25s ease; }
+.bar[data-scrolled] { border-bottom-color: var(--sep); }
+.bar-inner { max-width: 1280px; margin: 0 auto; padding-inline: 20px; min-height: 56px; display: flex; align-items: center; gap: 20px; }
+.brand { display: flex; align-items: center; gap: 9px; font: 600 15px/1 var(--font); letter-spacing: -0.015em; white-space: nowrap; }
+.brand svg { color: var(--accent); flex: none; }
+.missions { margin-left: auto; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; min-width: 0; padding-block: 8px; }
+.missions::-webkit-scrollbar { display: none; }
+.missions-label { font-size: 13px; color: var(--label-2); white-space: nowrap; margin-right: 4px; }
+.chip { flex: none; border: 0; background: var(--fill); color: var(--label); font-size: 13px; font-weight: 500; letter-spacing: -0.005em;
+  padding: 6px 13px; border-radius: 980px; cursor: pointer; white-space: nowrap; transition: transform 0.1s ease-out, background-color 0.2s ease; }
+.chip:hover { background: rgba(120, 120, 128, 0.18); }
+.chip:active { transform: scale(0.96); }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+@media (max-width: 860px) {
+  .bar-inner { flex-wrap: wrap; gap: 0 16px; }
+  .missions { margin-left: 0; width: 100%; padding-top: 0; }
+}
+
+/* ---------- page ---------- */
+.page { max-width: 1280px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px; }
+.hero { display: grid; gap: 10px; max-width: 760px; }
+.kicker { margin: 0; font-size: 14px; font-weight: 600; color: var(--accent-text); letter-spacing: -0.01em; }
+h1 { margin: 0; font: 700 clamp(32px, 4.4vw, 48px)/1.06 var(--font-display); letter-spacing: -0.03em; text-wrap: balance; }
+.lede { margin: 0; font-size: clamp(16px, 1.6vw, 19px); line-height: 1.42; color: var(--label-2); letter-spacing: -0.012em; max-width: 62ch; }
+
+.layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 981px) and (min-height: 900px) { .inputs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 76px); } }
+
+/* ---------- inset-grouped inputs ---------- */
+.inputs { display: grid; gap: 22px; min-width: 0; }
+.group { display: grid; gap: 7px; }
+.group-title { display: flex; align-items: baseline; justify-content: space-between; margin: 0; padding-inline: 16px;
+  font-size: 13px; font-weight: 600; color: var(--label-2); letter-spacing: -0.005em; }
+.group-title .note { font-weight: 500; color: var(--accent-text); }
+.list { background: var(--surface); border-radius: var(--r-md); box-shadow: var(--shadow); overflow: hidden; }
+.row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 6px 16px; cursor: text; }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); }
+.row > span:first-child { color: var(--label); }
+.field { display: flex; align-items: baseline; gap: 5px; }
+.field input { width: 8.5ch; border: 0; background: transparent; color: var(--label); text-align: right; font: 500 15px var(--font);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em; padding: 4px 2px; border-radius: 6px; -moz-appearance: textfield; appearance: textfield; }
+.field input::-webkit-outer-spin-button, .field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.field input:focus { outline: none; }
+.row:focus-within { background: var(--accent-soft); }
+.unit { font-size: 13px; color: var(--label-3); min-width: 2.6em; }
+.row.invalid { background: var(--bad-soft); }
+.row.invalid .field input { color: var(--bad); }
+.hint { margin: 0; padding-inline: 16px; font-size: 12.5px; color: var(--bad); }
+.foot { margin: 0; padding-inline: 16px; font-size: 12.5px; color: var(--label-3); line-height: 1.4; }
+
+.seg-wrap { padding: 10px; }
+.seg { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; border-radius: 9px; background: var(--fill); isolation: isolate; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { position: relative; z-index: 1; text-align: center; font-size: 13px; font-weight: 500; letter-spacing: -0.01em; padding: 6px 4px;
+  border-radius: 7px; cursor: pointer; white-space: nowrap; color: var(--label); transition: transform 0.1s ease-out; user-select: none; }
+.seg label:active { transform: scale(0.95); }
+.seg input:checked + label { font-weight: 600; }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -1px; }
+.seg-pill { position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: var(--seg-pill);
+  box-shadow: var(--seg-shadow); transition: opacity 0.2s ease; will-change: transform, width; }
+
+.wrow { display: grid; grid-template-columns: 96px minmax(0, 1fr) 36px; align-items: center; gap: 10px; min-height: 46px; padding: 2px 16px; position: relative; }
+.wrow + .wrow::before, .seg-wrap + .wrow::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); }
+.wrow output { text-align: right; font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--label-2); }
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer; --p: 50%; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--p), var(--fill) var(--p)); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; margin-top: -10px; border-radius: 50%; background: var(--thumb);
+  box-shadow: 0 0.5px 4px rgba(0, 0, 0, 0.12), 0 6px 13px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06); transition: transform 0.15s ease-out; }
+input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.12); }
+input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--fill); }
+input[type="range"]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+input[type="range"]::-moz-range-thumb { width: 24px; height: 24px; border: 0; border-radius: 50%; background: var(--thumb);
+  box-shadow: 0 0.5px 4px rgba(0, 0, 0, 0.12), 0 6px 13px rgba(0, 0, 0, 0.12); }
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent); }
+input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--accent); }
+
+details.group > summary { list-style: none; cursor: pointer; }
+details.group > summary::-webkit-details-marker { display: none; }
+.chev { width: 11px; height: 11px; transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); color: var(--label-3); }
+details[open] .chev { transform: rotate(90deg); }
+summary .group-title { justify-content: flex-start; gap: 6px; }
+
+/* ---------- result cards ---------- */
+.results { display: grid; gap: 20px; min-width: 0; }
+.card { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); min-width: 0; }
+.card-head { display: grid; gap: 2px; padding: 20px 22px 0; }
+.card-head h2, .card-head h3 { margin: 0; font: 600 19px/1.25 var(--font-display); letter-spacing: -0.02em; }
+.card-head p { margin: 0; font-size: 13.5px; color: var(--label-2); line-height: 1.4; }
+
+.verdict { padding: 24px 26px 24px; display: grid; gap: 16px; }
+.v-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.v-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); flex: none; }
+.eyebrow { font-size: 14px; font-weight: 600; color: var(--label-2); letter-spacing: -0.01em; }
+.chip-s { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; padding: 3px 10px 3px 8px; border-radius: 980px; }
+.chip-s svg { flex: none; }
+.chip-s.good { background: var(--good-soft); color: var(--good); }
+.chip-s.warn { background: var(--warn-soft); color: var(--warn); }
+.chip-s.bad { background: var(--bad-soft); color: var(--bad); }
+.v-head .chip-s { margin-left: auto; }
+.v-name { margin: 0; display: grid; gap: 2px; }
+.v-name .main { font: 700 clamp(30px, 3.6vw, 42px)/1.06 var(--font-display); letter-spacing: -0.03em; }
+.v-name .sub { font: 500 clamp(16px, 1.6vw, 19px)/1.3 var(--font); color: var(--label-2); letter-spacing: -0.015em; }
+.v-stats { margin: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--sep); border-bottom: 1px solid var(--sep); }
+.v-stats > div { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; padding: 14px 16px; min-width: 0; }
+.v-stats > div + div { border-left: 1px solid var(--sep); }
+.v-stats > div:first-child { padding-left: 0; }
+.v-stats dt { font-size: 12.5px; color: var(--label-2); }
+.v-stats dd { margin: 0; font: 600 clamp(22px, 2.3vw, 28px)/1.1 var(--font-display); letter-spacing: -0.025em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.v-stats dd small { font: 500 13px var(--font); color: var(--label-2); letter-spacing: 0; margin-left: 3px; }
+@media (max-width: 720px) {
+  .v-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 0; }
+  .v-stats > div { padding-left: 0; border-left: 0 !important; border-bottom: 1px solid var(--sep); }
+}
+.v-why { margin: 0; color: var(--label-2); max-width: 78ch; }
+.v-why b { color: var(--label); font-weight: 600; }
+.reasons { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--label-2); }
+.swap { animation: rise 0.42s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.pair { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 1180px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+.fig { position: relative; display: grid; gap: 6px; padding-bottom: 14px; }
+.fig svg { display: block; width: 100%; height: auto; overflow: visible; padding-inline: 14px; }
+svg text { font-family: var(--font); font-variant-numeric: tabular-nums; }
+.dot { cursor: pointer; outline: none; }
+.dot .mark { transition: r 0.2s ease, fill 0.2s ease, stroke 0.2s ease; }
+.dot:focus-visible .ring { stroke: var(--accent); stroke-width: 2; }
+.arc { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.craft { fill: var(--surface); stroke-width: 2.6; transition: opacity 0.3s ease; }
+.craft.done { opacity: 0; }
+.burn { opacity: 0; transform: scale(0.4); transform-box: fill-box; transform-origin: center; transition: opacity 0.2s ease, transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.burn.on { opacity: 1; transform: none; }
+.tip { position: absolute; pointer-events: none; z-index: 5; background: var(--tip-bg); color: var(--tip-ink); font-size: 12.5px; line-height: 1.45;
+  padding: 8px 11px; border-radius: 10px; white-space: nowrap; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-variant-numeric: tabular-nums; }
+.tip b { font-weight: 600; }
+
+.rank-card { padding-bottom: 10px; }
+.scroll { overflow-x: auto; padding: 10px 10px 0; }
+.rank { min-width: 700px; display: grid; gap: 2px; }
+.rh, .r { display: grid; grid-template-columns: minmax(210px, 2fr) 74px 76px 52px 64px 74px minmax(150px, 1.4fr); align-items: center; column-gap: 12px; padding-inline: 12px; }
+.rh { padding-block: 6px 8px; font-size: 12px; font-weight: 500; color: var(--label-3); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.r { min-height: 56px; padding-block: 8px; border-radius: 12px; cursor: pointer; transition: background-color 0.18s ease; will-change: transform; }
+.r:hover { background: var(--fill-2); }
+.r:active { background: var(--fill); }
+.r.sel { background: var(--accent-soft); }
+.r .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.r .dotc { width: 11px; height: 11px; border-radius: 50%; background: var(--c); flex: none; }
+.r.off .dotc { background: transparent; box-shadow: inset 0 0 0 2px var(--c); }
+.r .nm { display: grid; min-width: 0; }
+.r .nm b { font-weight: 600; letter-spacing: -0.015em; display: flex; align-items: center; gap: 8px; }
+.r .nm span { font-size: 12.5px; color: var(--label-2); line-height: 1.35; }
+.r.off .nm b, .r.off .num { color: var(--label-3); }
+.r.off .nm span { color: var(--bad); }
+.tag { font-size: 11.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent); padding: 2px 8px; border-radius: 980px; letter-spacing: 0; }
+.score { display: grid; gap: 3px; }
+.score .track { display: flex; align-items: center; gap: 10px; }
+.score .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+.score .bar i { display: block; height: 100%; border-radius: 3px; background: var(--c); }
+.score .val { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 3.2ch; text-align: right; }
+.score span { font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+
+.why { padding-bottom: 20px; }
+.why ul { list-style: none; margin: 12px 0 0; padding: 0 22px; display: grid; gap: 10px; }
+.why li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; align-items: start; color: var(--label); }
+.why li svg { color: var(--accent); margin-top: 2px; }
+
+footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height: 1.5; }
+
+@media (prefers-reduced-motion: reduce) {
+  .swap { animation: fade 0.2s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .burn, .burn.on { transform: none; transition: opacity 0.2s ease; }
+  .chip:active, .seg label:active { transform: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .bar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .tip { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--label); color: var(--surface); }
+}
+@media (prefers-contrast: more) {
+  :root { --sep: rgba(60, 60, 67, 0.45); }
+  .list, .card { box-shadow: 0 0 0 1px var(--label-3); }
+}
+</style>
+
+<header class="bar" id="bar">
+  <div class="bar-inner">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.3" fill="currentColor"></circle><ellipse cx="12" cy="12" rx="10" ry="4.8" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(-25 12 12)"></ellipse><circle cx="21" cy="7.8" r="1.8" fill="currentColor"></circle></svg>
+      Orbital Manoeuvre Planner
+    </div>
+    <nav class="missions" id="missions" aria-label="Example missions"><span class="missions-label">Try a mission</span></nav>
+  </div>
+</header>
+
+<div class="page">
+  <section class="hero">
+    <p class="kicker">ASE3004 Space Flight Mechanics · Project 38 · Satwik Sharma</p>
+    <h1>Which manoeuvre should this mission fly?</h1>
+    <p class="lede">Describe the transfer and what matters most. The tool sizes five candidate manoeuvres, optimises each one, removes those that break your constraints and ranks the rest.</p>
+  </section>
+
+  <div class="layout">
+    <form class="inputs" id="form" autocomplete="off" novalidate>
+      <section class="group" aria-labelledby="g-orbits">
+        <h2 class="group-title" id="g-orbits">Orbits</h2>
+        <div class="list">
+          <label class="row" for="alt1"><span>Initial altitude</span><span class="field"><input id="alt1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="alt2"><span>Target altitude</span><span class="field"><input id="alt2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="di_deg"><span>Inclination change</span><span class="field"><input id="di_deg" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
+        </div>
+      </section>
+
+      <section class="group" aria-labelledby="g-limits">
+        <h2 class="group-title" id="g-limits">Constraints</h2>
+        <div class="list">
+          <label class="row" for="dv_budget"><span>Δv budget</span><span class="field"><input id="dv_budget" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km/s</span></span></label>
+          <label class="row" for="tof_max_h"><span>Maximum transfer time</span><span class="field"><input id="tof_max_h" type="number" inputmode="decimal" min="0" step="any"><span class="unit">h</span></span></label>
+        </div>
+        <p class="hint" id="hint" hidden>Enter a number in every highlighted field.</p>
+      </section>
+
+      <section class="group" aria-labelledby="g-prop">
+        <h2 class="group-title" id="g-prop">Propulsion on board</h2>
+        <div class="list seg-wrap">
+          <div class="seg" role="radiogroup" aria-labelledby="g-prop" data-seg="propulsion">
+            <span class="seg-pill" aria-hidden="true"></span>
+            <input type="radio" name="propulsion" id="prop-both" value="both"><label for="prop-both">Both</label>
+            <input type="radio" name="propulsion" id="prop-chem" value="chemical"><label for="prop-chem">Chemical</label>
+            <input type="radio" name="propulsion" id="prop-ep" value="electric"><label for="prop-ep">Electric</label>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" aria-labelledby="g-prio">
+        <h2 class="group-title" id="g-prio">Mission priorities <span class="note" id="customNote" hidden>Custom</span></h2>
+        <div class="list">
+          <div class="seg-wrap">
+            <div class="seg" role="radiogroup" aria-labelledby="g-prio" data-seg="preset">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="preset" id="pre-bal" value="Balanced"><label for="pre-bal">Balanced</label>
+              <input type="radio" name="preset" id="pre-prop" value="Propellant-critical"><label for="pre-prop">Propellant</label>
+              <input type="radio" name="preset" id="pre-time" value="Time-critical"><label for="pre-time">Time</label>
+              <input type="radio" name="preset" id="pre-simple" value="Low-complexity"><label for="pre-simple">Simple</label>
+            </div>
+          </div>
+          <div class="wrow"><label for="w0">Δv</label><input type="range" id="w0" min="0" max="1" step="0.05"><output id="w0o" for="w0"></output></div>
+          <div class="wrow"><label for="w1">Propellant</label><input type="range" id="w1" min="0" max="1" step="0.05"><output id="w1o" for="w1"></output></div>
+          <div class="wrow"><label for="w2">Transfer time</label><input type="range" id="w2" min="0" max="1" step="0.05"><output id="w2o" for="w2"></output></div>
+          <div class="wrow"><label for="w3">Simplicity</label><input type="range" id="w3" min="0" max="1" step="0.05"><output id="w3o" for="w3"></output></div>
+        </div>
+        <p class="foot">Weights tell the scoring what this mission values. Drag any slider to set your own.</p>
+      </section>
+
+      <details class="group" id="advanced">
+        <summary><span class="group-title">Engine and limits <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></summary>
+        <div class="list">
+          <label class="row" for="isp_chem"><span>Chemical Isp</span><span class="field"><input id="isp_chem" type="number" inputmode="decimal" min="1" step="any" data-pos="1"><span class="unit">s</span></span></label>
+          <label class="row" for="isp_ep"><span>Electric Isp</span><span class="field"><input id="isp_ep" type="number" inputmode="decimal" min="1" step="any" data-pos="1"><span class="unit">s</span></span></label>
+          <label class="row" for="accel_ep"><span>Electric thrust F/m</span><span class="field"><input id="accel_ep" type="number" inputmode="decimal" min="0" step="any" data-pos="1"><span class="unit">m/s²</span></span></label>
+          <label class="row" for="rb_max"><span>Max bi-elliptic apoapsis</span><span class="field"><input id="rb_max" type="number" inputmode="decimal" min="1" step="any" data-pos="1"><span class="unit">km</span></span></label>
+        </div>
+      </details>
+    </form>
+
+    <main class="results">
+      <section class="card verdict" id="verdict" aria-live="polite"></section>
+
+      <div class="pair">
+        <section class="card fig">
+          <div class="card-head"><h3>Trade space</h3><p>Δv against transfer time. Hollow markers break a constraint.</p></div>
+          <svg id="scatter" viewBox="0 0 560 330" role="img" aria-label="Delta-v against transfer time for each manoeuvre"></svg>
+          <div class="tip" id="tip" hidden></div>
+        </section>
+        <section class="card fig">
+          <div class="card-head"><h3 id="geoTitle">Transfer geometry</h3><p id="geoSub"></p></div>
+          <svg id="geo" viewBox="0 0 360 330" role="img" aria-label="Transfer orbit diagram"></svg>
+        </section>
+      </div>
+
+      <section class="card rank-card">
+        <div class="card-head"><h3>Ranking</h3><p>Select a manoeuvre to draw it. Scores run from 0 to 1 across the feasible options.</p></div>
+        <div class="scroll">
+          <div class="rank" role="table" aria-label="Manoeuvre ranking">
+            <div class="rh" role="row"><span role="columnheader">Manoeuvre</span><span class="num" role="columnheader">Δv km/s</span><span class="num" role="columnheader">Time</span><span class="num" role="columnheader">Burns</span><span class="num" role="columnheader">Propellant</span><span class="num" role="columnheader">Complexity</span><span role="columnheader">Score</span></div>
+            <div id="rows" role="rowgroup"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card why">
+        <div class="card-head"><h3>Rule-based checks</h3><p>Textbook rules applied to this mission before scoring.</p></div>
+        <ul id="rules"></ul>
+      </section>
+
+      <footer>Models: Hohmann and bi-elliptic transfers with combined plane change, one-tangent burn (Vallado), Edelbaum low-thrust approximation and the Tsiolkovsky propellant fraction, in two-body motion with impulsive burns between circular orbits. Each manoeuvre's free parameter (plane-change split, bi-elliptic apoapsis, one-tangent apsis factor) is optimised numerically. Ranking uses weighted-sum scoring cross-checked with TOPSIS. The same engine runs in MATLAB and Python, where every burn plan is verified by orbit propagation and a Simulink finite-burn model.</footer>
+    </main>
+  </div>
+</div>
+
+<script id="engine">
+/* Orbital Manoeuvre Decision Support Tool - JavaScript engine.
+ * Port of python/odst.py and matlab/odst_evaluate.m (same models, rules, scoring).
+ * Units: km, s, km/s; angles in rad internally. */
+(function (root) {
+  "use strict";
+  const MU = 398600.4418, RE = 6378.137, G0 = 9.80665e-3;
+  const CPLX = { hohmann: 1.0, hohmann_split: 2.0, one_tangent: 2.5, bielliptic: 3.0, low_thrust: 4.0 };
+  const PRESETS = {
+    "Balanced": [0.30, 0.20, 0.30, 0.20],
+    "Propellant-critical": [0.25, 0.55, 0.05, 0.15],
+    "Time-critical": [0.15, 0.10, 0.60, 0.15],
+    "Low-complexity": [0.20, 0.20, 0.10, 0.50],
+  };
+
+  const vc = (r) => Math.sqrt(MU / r);
+  const vv = (r, a) => Math.sqrt(MU * (2 / r - 1 / a));
+  const comb = (a, b, ang) => Math.sqrt(Math.max(a * a + b * b - 2 * a * b * Math.cos(ang), 0));
+
+  function golden(f, a, b, tol) {
+    const g = (Math.sqrt(5) - 1) / 2;
+    let c = b - g * (b - a), d = a + g * (b - a), fc = f(c), fd = f(d);
+    for (let i = 0; i < 200 && Math.abs(b - a) > tol; i++) {
+      if (fc < fd) { b = d; d = c; fd = fc; c = b - g * (b - a); fc = f(c); }
+      else { a = c; c = d; fc = fd; d = a + g * (b - a); fd = f(d); }
+    }
+    return (a + b) / 2;
+  }
+  function bisect(f, a, b) {
+    let fa = f(a);
+    for (let i = 0; i < 200; i++) {
+      const m = (a + b) / 2, fm = f(m);
+      if ((fm > 0) === (fa > 0)) { a = m; fa = fm; } else { b = m; }
+      if (Math.abs(b - a) < 1e-10 * Math.max(1, Math.abs(a))) break;
+    }
+    return (a + b) / 2;
+  }
+
+  // ------------------------------------------------------------ manoeuvres
+  function hohmann(r1, r2, di, split) {
+    if (split == null) split = r2 >= r1 ? 0 : 1;
+    if (Math.abs(r2 - r1) < 1e-6) return { dv: 2 * vc(r1) * Math.sin(di / 2), tof: 0, burns: 1, split };
+    const a = (r1 + r2) / 2;
+    const dv = comb(vc(r1), vv(r1, a), split * di) + comb(vv(r2, a), vc(r2), (1 - split) * di);
+    return { dv, tof: Math.PI * Math.sqrt(a ** 3 / MU), burns: 2, split };
+  }
+  function hohmannSplitOpt(r1, r2, di) {
+    if (di <= 0 || Math.abs(r2 - r1) < 1e-6) return r2 >= r1 ? 0 : 1;
+    return golden((s) => hohmann(r1, r2, di, s).dv, 0, 1, 1e-8);
+  }
+  function bielliptic(r1, r2, rb, di) {
+    const a1 = (r1 + rb) / 2, a2 = (r2 + rb) / 2;
+    const dv = Math.abs(vv(r1, a1) - vc(r1)) + comb(vv(rb, a1), vv(rb, a2), di) + Math.abs(vv(r2, a2) - vc(r2));
+    return { dv, tof: Math.PI * (Math.sqrt(a1 ** 3 / MU) + Math.sqrt(a2 ** 3 / MU)), burns: 3, rb };
+  }
+  function bieOpt(r1, r2, di, rbmax, tofmax) {
+    const rlo = Math.max(r1, r2) * (1 + 1e-9);
+    let rhi = rbmax;
+    const T = (rb) => bielliptic(r1, r2, rb, di).tof, D = (rb) => bielliptic(r1, r2, rb, di).dv;
+    if (T(rhi) > tofmax) {
+      if (T(rlo) > tofmax) return null;
+      rhi = bisect((rb) => T(rb) - tofmax, rlo, rhi);
+    }
+    const n = 400, grid = [];
+    for (let i = 0; i < n; i++) grid.push(rlo * Math.pow(rhi / rlo, i / (n - 1)));
+    let bi = 0, bd = Infinity;
+    grid.forEach((rb, i) => { const d = D(rb); if (d < bd) { bd = d; bi = i; } });
+    const lo = grid[Math.max(bi - 1, 0)], hi = grid[Math.min(bi + 1, n - 1)];
+    if (hi > lo) { const x = golden(D, lo, hi, 1e-3); if (D(x) <= bd) return x; }
+    return grid[bi];
+  }
+  function oneTangent(r1, r2, k, di) {
+    const raising = r2 > r1;
+    const rp = raising ? r1 : r2 / k, ra = raising ? k * r2 : r1;
+    const a = (rp + ra) / 2, e = (ra - rp) / (ra + rp), p = a * (1 - e * e);
+    if (e < 1e-12) return Object.assign(hohmann(r1, r2, di), { e, nu: NaN, phi: NaN, k, raising });
+    const v1 = vc(r1), v2 = vc(r2), vt1 = vv(r1, a), vt2 = vv(r2, a);
+    const nu = Math.acos(Math.min(1, Math.max(-1, (p / r2 - 1) / e)));
+    const phi = Math.atan2(e * Math.sin(nu), 1 + e * Math.cos(nu));
+    const E = 2 * Math.atan(Math.sqrt((1 - e) / (1 + e)) * Math.tan(nu / 2));
+    const tPeri = Math.sqrt(a ** 3 / MU) * (E - e * Math.sin(E));
+    let tof, dv;
+    if (raising) {
+      tof = tPeri;
+      dv = Math.abs(vt1 - v1) + Math.sqrt(Math.max(vt2 ** 2 + v2 ** 2 - 2 * vt2 * v2 * Math.cos(phi) * Math.cos(di), 0));
+    } else {
+      tof = Math.PI * Math.sqrt(a ** 3 / MU) - tPeri;
+      dv = comb(v1, vt1, di) + Math.sqrt(Math.max(vt2 ** 2 + v2 ** 2 - 2 * vt2 * v2 * Math.cos(phi), 0));
+    }
+    return { dv, tof, burns: 2, e, nu, phi, k, raising, rp, ra };
+  }
+  function oneTangentForTof(r1, r2, di, target, kmax = 50) {
+    const f = (k) => oneTangent(r1, r2, k, di).tof - target, k0 = 1 + 1e-9;
+    if (f(k0) <= 0) return k0;
+    if (f(kmax) > 0) return null;
+    return bisect(f, k0, kmax);
+  }
+  function lowThrust(r1, r2, di, accel) {
+    const v1 = vc(r1), v2 = vc(r2);
+    const dv = Math.sqrt(Math.max(v1 ** 2 + v2 ** 2 - 2 * v1 * v2 * Math.cos(Math.PI / 2 * di), 0));
+    // revolutions of the equivalent coplanar spiral, for the diagram caption
+    const revs = Math.abs(v1 ** 4 - v2 ** 4) / (8 * Math.PI * MU * accel * 1e-3);
+    return { dv, tof: dv / (accel * 1e-3), burns: 0, revs };
+  }
+
+  // ------------------------------------------------------------- evaluate
+  function evaluate(m) {
+    const r1 = RE + m.alt1, r2 = RE + m.alt2, di = m.di_deg * Math.PI / 180, tofmax = m.tof_max_h * 3600;
+    const same = Math.abs(r2 - r1) < 1e-6;
+    const opts = [];
+    const add = (key, name, res, isp, extra) => {
+      const o = Object.assign({ key, name, isp, complexity: CPLX[key], applicable: true, note: "", params: {} }, res, extra || {});
+      opts.push(o); return o;
+    };
+
+    add("hohmann", same ? "Simple plane change" : "Hohmann (combined plane change)", hohmann(r1, r2, di), m.isp_chem);
+
+    const s = hohmannSplitOpt(r1, r2, di);
+    const hs = add("hohmann_split", "Hohmann (optimal plane-change split)", hohmann(r1, r2, di, s), m.isp_chem,
+                   { params: { split_at_r1: s } });
+    if (di <= 0 || same) { hs.applicable = false; hs.note = "identical to Hohmann (no plane change to split)"; }
+
+    let rb = bieOpt(r1, r2, di, Math.max(m.rb_max, 1.01 * Math.max(r1, r2)), tofmax);
+    const tofOk = rb != null;
+    if (!tofOk) rb = 2 * Math.max(r1, r2);
+    const be = add("bielliptic", "Bi-elliptic", bielliptic(r1, r2, rb, di), m.isp_chem, { params: { rb, rb_over_r1: rb / r1 } });
+    if (tofOk && rb < 1.001 * Math.max(r1, r2)) { be.applicable = false; be.note = "optimum degenerates to Hohmann (rB → r2)"; }
+
+    if (!same) {
+      const tofH = hohmann(r1, r2, di).tof;
+      let k, note;
+      if (tofmax < tofH) {
+        k = oneTangentForTof(r1, r2, di, tofmax);
+        note = k ? "k solved to meet the TOF limit" : "cannot meet the TOF limit (k > 50)";
+        k = k || 50;
+      } else { k = m.k_one_tangent; note = "default k"; }
+      const ot = oneTangent(r1, r2, k, di);
+      add("one_tangent", "One-tangent burn (fast)", ot, m.isp_chem, { note, params: { k, e: ot.e, fpa_deg: ot.phi * 180 / Math.PI } });
+    }
+
+    add("low_thrust", "Low-thrust spiral (Edelbaum)", lowThrust(r1, r2, di, m.accel_ep), m.isp_ep);
+
+    for (const o of opts) {
+      o.prop_frac = 1 - Math.exp(-o.dv / (o.isp * G0));
+      o.reasons = []; o.feasible = o.applicable;
+      if (!o.applicable) { o.reasons.push(o.note); continue; }
+      if (o.dv > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
+      if (o.tof > tofmax * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
+      if (o.key === "low_thrust" && m.propulsion === "chemical") { o.feasible = false; o.reasons.push("no electric propulsion on board"); }
+      if (o.key !== "low_thrust" && m.propulsion === "electric") { o.feasible = false; o.reasons.push("no high-thrust (chemical) propulsion on board"); }
+    }
+    score(m, opts);
+    const feas = opts.filter((o) => o.feasible);
+    const rec = feas.length ? feas.reduce((b, o) => (o.score_ws > b.score_ws ? o : b)) : null;
+    return { opts, rec, advice: advice(m, r1, r2, di), r1, r2 };
+  }
+
+  function score(m, opts) {
+    const feas = opts.filter((o) => o.feasible);
+    opts.forEach((o) => { o.score_ws = NaN; o.score_topsis = NaN; });
+    if (!feas.length) return;
+    const ws = m.weights.reduce((a, b) => a + b, 0), w = m.weights.map((x) => x / ws);
+    const X = feas.map((o) => [o.dv, o.prop_frac, Math.log10(Math.max(o.tof, 60)), o.complexity]);
+    const lo = [0, 1, 2, 3].map((c) => Math.min(...X.map((r) => r[c])));
+    const hi = [0, 1, 2, 3].map((c) => Math.max(...X.map((r) => r[c])));
+    const nrm = [0, 1, 2, 3].map((c) => { const n = Math.hypot(...X.map((r) => r[c])); return n < 1e-12 ? 1 : n; });
+    const V = X.map((r) => r.map((x, c) => (x / nrm[c]) * w[c]));
+    const best = [0, 1, 2, 3].map((c) => Math.min(...V.map((r) => r[c])));
+    const worst = [0, 1, 2, 3].map((c) => Math.max(...V.map((r) => r[c])));
+    feas.forEach((o, j) => {
+      o.score_ws = X[j].reduce((s, x, c) => s + w[c] * (hi[c] - lo[c] > 1e-12 ? (hi[c] - x) / (hi[c] - lo[c]) : 1), 0);
+      const dp = Math.hypot(...V[j].map((x, c) => x - best[c])), dm = Math.hypot(...V[j].map((x, c) => x - worst[c]));
+      o.score_topsis = dp + dm > 1e-12 ? dm / (dp + dm) : 1;
+    });
+  }
+
+  function advice(m, r1, r2, di) {
+    const R = Math.max(r1, r2) / Math.min(r1, r2), out = [];
+    if (R < 11.94) out.push(`R = ${R.toFixed(2)} < 11.94, so Hohmann is the minimum-Δv two/three-impulse transfer.`);
+    else if (R < 15.58) out.push(`11.94 ≤ R = ${R.toFixed(2)} < 15.58, so bi-elliptic wins only if rB is large enough.`);
+    else out.push(`R = ${R.toFixed(2)} ≥ 15.58, so bi-elliptic beats Hohmann for any rB > r2.`);
+    if (m.di_deg > 0) out.push("Do the plane change where the speed is lowest (largest radius), combined with a burn.");
+    if (R < 1 + 1e-9 && m.di_deg > 48.94) out.push("Δi > 48.94°: a three-impulse (bi-elliptic) plane change beats a single burn.");
+    const tofH = hohmann(r1, r2, di).tof / 3600;
+    if (m.tof_max_h < tofH) out.push(`TOF limit ${(+m.tof_max_h).toFixed(2)} h < Hohmann ${tofH.toFixed(2)} h, so a fast (one-tangent) transfer is required.`);
+    if (m.propulsion !== "chemical") out.push("Electric propulsion is on board: a low-thrust spiral minimises propellant if time allows.");
+    return out;
+  }
+
+  const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>
+(() => {
+  "use strict";
+  const O = window.ODST;
+  const $ = (id) => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+  const SHORT = { hohmann: "Hohmann", hohmann_split: "Hohmann split", bielliptic: "Bi-elliptic", one_tangent: "One-tangent", low_thrust: "Low-thrust" };
+  const col = (k) => `var(--s-${k})`;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  const ICON_CHECK = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ICON_WARN = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 7v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="currentColor"/></svg>';
+  const ICON_INFO = '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>';
+
+  const DEFAULT = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6, tof_max_h: 4800, rb_max: 384400,
+                    propulsion: "both", isp_chem: 320, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced" };
+  const EXAMPLES = [
+    { label: "LEO → GEO", v: {} },
+    { label: "High orbit, R = 15", v: { alt1: 621.863, alt2: 98621.863, di_deg: 0, tof_max_h: 1440, propulsion: "chemical", preset: "Propellant-critical" } },
+    { label: "36-min rapid response", v: { alt1: 400, alt2: 800, di_deg: 0, dv_budget: 1, tof_max_h: 0.6, preset: "Time-critical" } },
+    { label: "All-electric GEO", v: { tof_max_h: 8760, preset: "Propellant-critical" } },
+    { label: "60° plane change", v: { alt1: 500, alt2: 500, di_deg: 60, dv_budget: 10, tof_max_h: 4800, propulsion: "chemical", preset: "Propellant-critical" } },
+  ];
+  const numIds = ["alt1", "alt2", "di_deg", "dv_budget", "tof_max_h", "rb_max", "isp_chem", "isp_ep", "accel_ep"];
+
+  // ---------------------------------------------------------------- springs
+  // Apple-style parameters: response (s) and damping ratio. Re-targeting keeps the
+  // current position and velocity, so every animation is interruptible.
+  const springs = new Map();
+  let raf = 0, lastT = 0;
+  function spring(key, target, apply, o = {}) {
+    const response = o.response ?? 0.4, damping = o.damping ?? 1;
+    let s = springs.get(key);
+    if (!s) { s = { x: o.from ?? target, v: 0 }; springs.set(key, s); }
+    else if (o.from !== undefined) s.x = o.from;
+    Object.assign(s, { target, apply, eps: o.eps ?? 0.01, k: (2 * Math.PI / response) ** 2, c: (4 * Math.PI * damping) / response, settled: false });
+    if (o.snap || reduce.matches) { s.x = target; s.v = 0; s.settled = true; apply(target); return; }
+    apply(s.x);
+    if (!raf) { lastT = performance.now(); raf = requestAnimationFrame(tick); }
+  }
+  function tick(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+    let busy = false;
+    springs.forEach((s) => {
+      if (s.settled) return;
+      const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+      for (let i = 0; i < n; i++) { const a = -s.k * (s.x - s.target) - s.c * s.v; s.v += a * h; s.x += s.v * h; }
+      if (Math.abs(s.x - s.target) < s.eps && Math.abs(s.v) < s.eps * 4) { s.x = s.target; s.v = 0; s.settled = true; } else busy = true;
+      s.apply(s.x);
+    });
+    raf = busy ? requestAnimationFrame(tick) : 0;
+  }
+
+  // ---------------------------------------------------------------- helpers
+  const fmtT = (s) => s < 60 ? [s.toFixed(0), "s"] : s < 3600 ? [(s / 60).toFixed(0), "min"] : s < 72 * 3600 ? [(s / 3600).toFixed(2), "h"] : [(s / 86400).toFixed(1), "days"];
+  const fmtTs = (s) => fmtT(s).join(" ");
+  const fmtKm = (x) => Math.round(x).toLocaleString("en-US");
+  const splitName = (n) => { const i = n.indexOf(" ("); return i < 0 ? [n, ""] : [n.slice(0, i), n.slice(i + 2, -1)]; };
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  function el(tag, attrs, parent, style) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (style) Object.assign(e.style, style);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  // ---------------------------------------------------------------- toolbar
+  const bar = $("bar");
+  const onScroll = () => { if (scrollY > 4) bar.setAttribute("data-scrolled", ""); else bar.removeAttribute("data-scrolled"); };
+  addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+  const missions = $("missions");
+  EXAMPLES.forEach((e, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip"; b.textContent = e.label; b.setAttribute("aria-pressed", String(i === 0));
+    b.addEventListener("click", () => {
+      missions.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c === b)));
+      setInputs(e.v); manualPick = false; run({ replay: true });
+    });
+    missions.appendChild(b);
+  });
+  const clearExample = () => missions.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
+
+  // ---------------------------------------------------------------- segmented controls
+  function layoutSeg(seg, animate) {
+    const pill = seg.querySelector(".seg-pill"), on = seg.querySelector("input:checked");
+    if (!on) { pill.style.opacity = "0"; return; }
+    const lab = seg.querySelector(`label[for="${on.id}"]`);
+    pill.style.opacity = "1";
+    const id = seg.dataset.seg, cfg = { response: 0.32, snap: !animate };
+    spring(id + ":x", lab.offsetLeft, (v) => { pill.style.transform = `translateX(${v}px)`; }, cfg);
+    spring(id + ":w", lab.offsetWidth, (v) => { pill.style.width = v + "px"; }, cfg);
+  }
+  const segs = [...document.querySelectorAll(".seg")];
+  const ro = new ResizeObserver(() => segs.forEach((s) => layoutSeg(s, false)));
+  segs.forEach((s) => ro.observe(s));
+
+  // ---------------------------------------------------------------- inputs
+  function setInputs(v) {
+    const s = Object.assign({}, DEFAULT, v);
+    numIds.forEach((id) => { $(id).value = s[id]; });
+    document.querySelector(`input[name="propulsion"][value="${s.propulsion}"]`).checked = true;
+    setPreset(s.preset);
+    segs.forEach((g) => layoutSeg(g, true));
+  }
+  function setPreset(name) {
+    const r = document.querySelector(`input[name="preset"][value="${name}"]`);
+    if (r) r.checked = true;
+    O.PRESETS[name].forEach((x, i) => { $("w" + i).value = x; });
+    $("customNote").hidden = true;
+    showWeights();
+  }
+  function showWeights() {
+    for (let i = 0; i < 4; i++) {
+      const w = $("w" + i);
+      $("w" + i + "o").value = (+w.value).toFixed(2);
+      w.style.setProperty("--p", (+w.value * 100) + "%");
+    }
+  }
+  function readMission() {
+    const m = { k_one_tangent: 1.5, propulsion: document.querySelector('input[name="propulsion"]:checked').value,
+                weights: [0, 1, 2, 3].map((i) => +$("w" + i).value) };
+    numIds.forEach((id) => { m[id] = parseFloat($(id).value); });
+    return m;
+  }
+  function validate() {
+    let ok = true, advBad = false;
+    numIds.forEach((id) => {
+      const inp = $(id), v = parseFloat(inp.value);
+      const bad = !isFinite(v) || v < 0 || (inp.max !== "" && v > +inp.max) || (inp.dataset.pos !== undefined && v <= 0);
+      inp.closest(".row").classList.toggle("invalid", bad);
+      inp.setAttribute("aria-invalid", String(bad));
+      if (bad) { ok = false; if (inp.closest("details")) advBad = true; }
+    });
+    if (advBad) $("advanced").open = true;
+    $("hint").hidden = ok;
+    return ok;
+  }
+
+  let frame = 0;
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; run({}); }); };
+  numIds.forEach((id) => $(id).addEventListener("input", () => { clearExample(); schedule(); }));
+  document.querySelectorAll('input[name="propulsion"]').forEach((r) => r.addEventListener("change", () => {
+    layoutSeg(r.closest(".seg"), true); clearExample(); run({});
+  }));
+  document.querySelectorAll('input[name="preset"]').forEach((r) => r.addEventListener("change", () => {
+    setPreset(r.value); layoutSeg(r.closest(".seg"), true); clearExample(); run({});
+  }));
+  for (let i = 0; i < 4; i++) $("w" + i).addEventListener("input", () => {
+    document.querySelectorAll('input[name="preset"]').forEach((r) => { r.checked = false; });
+    layoutSeg(document.querySelector('[data-seg="preset"]'), true);
+    $("customNote").hidden = false; showWeights(); clearExample(); schedule();
+  });
+  $("form").addEventListener("submit", (e) => e.preventDefault());
+
+  // ---------------------------------------------------------------- run
+  let selected = null, manualPick = false, last = null, lastRec = null;
+  function run(opts) {
+    if (!validate()) {
+      $("verdict").innerHTML = `<div class="v-head"><span class="chip-s bad">${ICON_WARN} Check inputs</span></div>
+        <h2 class="v-name"><span class="main">Some values need fixing</span></h2>
+        <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero.</p>`;
+      return;
+    }
+    const m = readMission();
+    if (m.weights.every((w) => w === 0)) m.weights = [1, 1, 1, 1];
+    const res = O.evaluate(m);
+    const prevSel = selected;
+    if (!manualPick || !res.opts.some((o) => o.key === selected)) { selected = res.rec ? res.rec.key : res.opts[0].key; manualPick = false; }
+    last = { m, res };
+    renderVerdict(m, res);
+    renderScatter(res, m);
+    renderTable(res, true);
+    renderGeo(m, res, !!opts.replay || (manualPick && prevSel !== selected));
+    renderRules(res);
+  }
+  function pick(key) {
+    if (!last) return;
+    manualPick = true;
+    const changed = key !== selected;
+    selected = key;
+    document.querySelectorAll("#rows .r").forEach((r) => { r.classList.toggle("sel", r.dataset.key === key); r.setAttribute("aria-selected", String(r.dataset.key === key)); });
+    renderScatter(last.res, last.m);
+    if (changed) renderGeo(last.m, last.res, true);
+  }
+
+  // ---------------------------------------------------------------- verdict
+  function detail(o, m) {
+    const p = o.params || {};
+    if (o.key === "hohmann_split") return `Split the ${m.di_deg}° plane change: ${(p.split_at_r1 * m.di_deg).toFixed(2)}° at departure and ${((1 - p.split_at_r1) * m.di_deg).toFixed(2)}° at arrival.`;
+    if (o.key === "bielliptic") return `Coast out to an optimal apoapsis of ${fmtKm(p.rb)} km (${p.rb_over_r1.toFixed(1)} times the initial radius), where a plane change is cheapest, then fall to the target orbit.`;
+    if (o.key === "one_tangent") return `A faster transfer ellipse (k = ${p.k.toFixed(4)}, e = ${p.e.toFixed(3)}) meets the target orbit at a ${p.fpa_deg.toFixed(1)}° flight-path angle.${o.note.startsWith("k solved") ? " k is the smallest value that meets the time limit." : ""}`;
+    if (o.key === "low_thrust") return `Continuous thrust at ${m.accel_ep} m/s² spirals out over about ${Math.round(o.revs).toLocaleString("en-US")} revolutions. The high Isp keeps the propellant mass low.`;
+    if (o.burns === 1) return "A single burn at the node rotates the orbit plane. No transfer orbit is needed.";
+    return m.di_deg > 0 ? `The ${m.di_deg}° plane change is combined with the burn at the larger radius, where the orbital speed is lowest.` : "Two tangential burns at the ends of the transfer ellipse.";
+  }
+  function renderVerdict(m, res) {
+    const v = $("verdict"), r = res.rec;
+    if (!r) {
+      const items = res.opts.filter((o) => o.applicable).map((o) => `<li><b>${SHORT[o.key]}</b>: ${o.reasons.join("; ")}</li>`).join("");
+      v.style.removeProperty("--c");
+      v.innerHTML = `<div class="v-head"><span class="chip-s bad">${ICON_WARN} No feasible manoeuvre</span></div>
+        <h2 class="v-name"><span class="main">Relax a constraint</span><span class="sub">Every candidate breaks at least one limit</span></h2>
+        <ul class="reasons">${items}</ul>`;
+    } else {
+      const feas = res.opts.filter((o) => o.feasible);
+      const topT = feas.reduce((b, o) => (o.score_topsis > b.score_topsis ? o : b));
+      const agree = topT.key === r.key;
+      const chip = agree ? `<span class="chip-s good">${ICON_CHECK} TOPSIS agrees</span>` : `<span class="chip-s warn">${ICON_WARN} Methods disagree</span>`;
+      const note = agree ? "" : ` TOPSIS prefers <b>${topT.name}</b> (${topT.score_topsis.toFixed(2)} against ${r.score_topsis.toFixed(2)}), so this choice is close.`;
+      const [main, sub] = splitName(r.name), [tn, tu] = fmtT(r.tof);
+      v.innerHTML = `<div class="v-head"><span class="v-dot" style="--c:${col(r.key)}"></span><span class="eyebrow">Recommended manoeuvre</span>${chip}</div>
+        <h2 class="v-name"><span class="main">${main}</span>${sub ? `<span class="sub">${cap(sub)}</span>` : ""}</h2>
+        <dl class="v-stats">
+          <div><dt>Total Δv</dt><dd>${r.dv.toFixed(3)}<small>km/s</small></dd></div>
+          <div><dt>Transfer time</dt><dd>${tn}<small>${tu}</small></dd></div>
+          <div><dt>Burns</dt><dd>${r.burns || "Cont."}</dd></div>
+          <div><dt>Propellant</dt><dd>${(100 * r.prop_frac).toFixed(1)}<small>% of mass</small></dd></div>
+          <div><dt>Score</dt><dd>${r.score_ws.toFixed(2)}<small>of 1</small></dd></div>
+        </dl>
+        <p class="v-why">${detail(r, m)}${note} ${feas.length} of ${res.opts.length} candidates meet your constraints.</p>`;
+    }
+    const key = r ? r.key : "none";
+    if (lastRec !== null && key !== lastRec) { v.classList.remove("swap"); void v.offsetWidth; v.classList.add("swap"); }
+    lastRec = key;
+  }
+
+  // ---------------------------------------------------------------- ranking (FLIP re-sort)
+  function renderTable(res, flip) {
+    const body = $("rows"), prev = new Map();
+    if (flip) body.querySelectorAll(".r").forEach((r) => prev.set(r.dataset.key, r.getBoundingClientRect().top));
+    body.innerHTML = "";
+    const order = res.opts.slice().sort((a, b) => (b.feasible - a.feasible) || ((b.score_ws || 0) - (a.score_ws || 0)));
+    order.forEach((o) => {
+      const r = document.createElement("div");
+      r.className = "r" + (o.feasible ? "" : " off") + (o.key === selected ? " sel" : "");
+      r.dataset.key = o.key; r.tabIndex = 0;
+      r.setAttribute("role", "row"); r.setAttribute("aria-selected", String(o.key === selected));
+      r.style.setProperty("--c", col(o.key));
+      const [main, sub] = splitName(o.name);
+      const top = res.rec && res.rec.key === o.key;
+      const caption = o.feasible ? cap(sub || (o.key === "bielliptic" ? "three burns via a high apoapsis" : "")) : o.reasons.join("; ");
+      r.innerHTML = `<div class="name" role="cell"><span class="dotc"></span><span class="nm"><b>${main}${top ? '<span class="tag">Recommended</span>' : ""}</b>${caption ? `<span>${caption}</span>` : ""}</span></div>
+        <span class="num" role="cell">${o.dv.toFixed(3)}</span><span class="num" role="cell">${fmtTs(o.tof)}</span><span class="num" role="cell">${o.burns || "Cont."}</span>
+        <span class="num" role="cell">${(100 * o.prop_frac).toFixed(1)}%</span><span class="num" role="cell">${o.complexity.toFixed(1)}</span>
+        <div class="score" role="cell">${o.feasible
+          ? `<div class="track"><div class="bar"><i></i></div><span class="val">${o.score_ws.toFixed(2)}</span></div><span>TOPSIS ${o.score_topsis.toFixed(2)}</span>`
+          : '<span>Not scored</span>'}</div>`;
+      r.addEventListener("click", () => pick(o.key));
+      r.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(o.key); } });
+      body.appendChild(r);
+      const fill = r.querySelector(".bar i");
+      if (fill) spring("bar:" + o.key, o.score_ws * 100, (x) => { fill.style.width = x + "%"; }, { response: 0.5 });
+      else spring("bar:" + o.key, 0, () => {}, { snap: true });
+    });
+    if (!flip) return;
+    body.querySelectorAll(".r").forEach((r) => {
+      const p = prev.get(r.dataset.key);
+      if (p === undefined) return;
+      const d = p - r.getBoundingClientRect().top;
+      spring("row:" + r.dataset.key, 0, (x) => { r.style.transform = Math.abs(x) < 0.05 ? "" : `translateY(${x}px)`; }, { from: d, response: 0.45 });
+    });
+  }
+
+  // ---------------------------------------------------------------- trade space
+  const TICKS = [[60, "1 min"], [600, "10 min"], [3600, "1 h"], [6 * 3600, "6 h"], [86400, "1 day"], [10 * 86400, "10 days"], [100 * 86400, "100 days"], [365.25 * 86400, "1 year"], [3652.5 * 86400, "10 years"]];
+  function niceStep(x) { const p = 10 ** Math.floor(Math.log10(x)), f = x / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; }
+  function renderScatter(res, m) {
+    const svg = $("scatter");
+    let stat = svg.querySelector("#sc-static"), dots = svg.querySelector("#sc-dots");
+    if (!stat) { stat = el("g", { id: "sc-static" }, svg); dots = el("g", { id: "sc-dots" }, svg); }
+    stat.innerHTML = "";
+    const W = 560, H = 330, L = 44, R = 12, T = 12, B = 40;
+    const pts = res.opts.filter((o) => o.applicable);
+    let lx0 = Math.floor(Math.log10(Math.max(60, Math.min(...pts.map((o) => o.tof)))) - 0.15);
+    let lx1 = Math.ceil(Math.log10(Math.max(...pts.map((o) => o.tof))) + 0.15);
+    if (lx1 - lx0 < 2) lx1 = lx0 + 2;
+    const dmax = Math.max(...pts.map((o) => o.dv), m.dv_budget < 1.6 * Math.max(...pts.map((o) => o.dv)) ? m.dv_budget : 0) * 1.12;
+    const X = (t) => L + (Math.log10(Math.max(t, 60)) - lx0) / (lx1 - lx0) * (W - L - R);
+    const Y = (d) => H - B - d / dmax * (H - B - T);
+    const step = niceStep(dmax / 5);
+    for (let d = 0; d <= dmax + 1e-9; d += step) {
+      el("line", { x1: L, x2: W - R, y1: Y(d), y2: Y(d) }, stat, { stroke: "var(--grid)" });
+      el("text", { x: L - 10, y: Y(d) + 4, "text-anchor": "end", "font-size": 11.5 }, stat, { fill: "var(--label-3)" }).textContent = d.toFixed(step < 1 ? 1 : 0);
+    }
+    TICKS.filter(([t]) => Math.log10(t) >= lx0 && Math.log10(t) <= lx1).forEach(([t, lab]) => {
+      el("line", { x1: X(t), x2: X(t), y1: T, y2: H - B }, stat, { stroke: "var(--grid)" });
+      el("text", { x: X(t), y: H - B + 18, "text-anchor": "middle", "font-size": 11.5 }, stat, { fill: "var(--label-3)" }).textContent = lab;
+    });
+    el("text", { x: L, y: H - 4, "font-size": 12 }, stat, { fill: "var(--label-2)" }).textContent = "Transfer time (log scale) →";
+    el("text", { x: L - 36, y: T + 2, "font-size": 12, transform: `rotate(-90 ${L - 36} ${T + 2})`, "text-anchor": "end" }, stat, { fill: "var(--label-2)" }).textContent = "Total Δv, km/s";
+    if (m.tof_max_h * 3600 > 10 ** lx0 && m.tof_max_h * 3600 < 10 ** lx1) {
+      const x = X(m.tof_max_h * 3600);
+      el("line", { x1: x, x2: x, y1: T, y2: H - B, "stroke-dasharray": "3 4" }, stat, { stroke: "var(--bad)", strokeWidth: "1.3" });
+      el("text", { x: x - 6, y: H - B - 8, "text-anchor": "end", "font-size": 11 }, stat, { fill: "var(--bad)" }).textContent = "Time limit";
+    }
+    if (m.dv_budget < dmax) {
+      const y = Y(m.dv_budget);
+      el("line", { x1: L, x2: W - R, y1: y, y2: y, "stroke-dasharray": "3 4" }, stat, { stroke: "var(--bad)", strokeWidth: "1.3" });
+      el("text", { x: W - R, y: y - 6, "text-anchor": "end", "font-size": 11 }, stat, { fill: "var(--bad)" }).textContent = "Δv budget";
+    }
+    // targets + label de-collision
+    const placed = pts.map((o) => ({ o, x: X(o.tof), y: Y(o.dv) })).sort((a, b) => a.y - b.y);
+    const taken = [];
+    placed.forEach((p) => {
+      let ly = p.y + 4;
+      for (const q of taken) if (Math.abs(q.x - p.x) < 120 && Math.abs(q.y - ly) < 15) ly = q.y + 15;
+      taken.push({ x: p.x, y: ly }); p.ly = ly - p.y; p.end = p.x > W - R - 120;
+    });
+    const live = new Set();
+    placed.forEach((p) => {
+      const k = p.o.key; live.add(k);
+      let g = dots.querySelector(`[data-key="${k}"]`);
+      if (!g) {
+        g = el("g", { "data-key": k, class: "dot", tabindex: 0, role: "button" }, dots);
+        el("circle", { r: 16, class: "hit" }, g, { fill: "transparent" });
+        el("circle", { r: 11, class: "ring" }, g, { fill: "none", stroke: "transparent" });
+        el("circle", { class: "mark" }, g);
+        el("text", { "font-size": 12.5, "font-weight": 500 }, g);
+        const show = () => showTip(g); g.addEventListener("pointerenter", show); g.addEventListener("focus", show);
+        g.addEventListener("pointerleave", hideTip); g.addEventListener("blur", hideTip);
+        g.addEventListener("click", () => pick(k));
+        g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(k); } });
+      }
+      g.setAttribute("aria-label", `${p.o.name}: ${p.o.dv.toFixed(3)} km/s, ${fmtTs(p.o.tof)}`);
+      const mark = g.querySelector(".mark"), sel = k === selected;
+      mark.setAttribute("r", sel ? 7.5 : 6);
+      Object.assign(mark.style, p.o.feasible ? { fill: col(k), stroke: "var(--surface)", strokeWidth: "2" } : { fill: "var(--surface)", stroke: col(k), strokeWidth: "2.2" });
+      g.querySelector(".ring").style.stroke = sel ? col(k) : "transparent";
+      const t = g.querySelector("text");
+      t.textContent = SHORT[k]; t.setAttribute("x", p.end ? -14 : 14); t.setAttribute("text-anchor", p.end ? "end" : "start");
+      t.style.fill = p.o.feasible ? "var(--label)" : "var(--label-3)";
+      const move = () => g.setAttribute("transform", `translate(${g.__x.toFixed(2)} ${g.__y.toFixed(2)})`);
+      spring("sx:" + k, p.x, (v) => { g.__x = v; if (g.__y !== undefined) move(); }, { response: 0.5 });
+      spring("sy:" + k, p.y, (v) => { g.__y = v; move(); }, { response: 0.5 });
+      spring("sl:" + k, p.ly, (v) => { t.setAttribute("y", v.toFixed(2)); }, { response: 0.5 });
+    });
+    dots.querySelectorAll("g.dot").forEach((g) => { if (!live.has(g.dataset.key)) g.remove(); });
+  }
+  function showTip(g) {
+    const o = last && last.res.opts.find((x) => x.key === g.dataset.key);
+    if (!o) return;
+    const t = $("tip"), svg = $("scatter"), box = svg.getBoundingClientRect(), host = svg.parentElement.getBoundingClientRect();
+    const s = box.width / 560;
+    t.innerHTML = `<b>${o.name}</b><br>Δv ${o.dv.toFixed(3)} km/s · ${fmtTs(o.tof)}<br>Propellant ${(100 * o.prop_frac).toFixed(1)}% · ${o.feasible ? "score " + o.score_ws.toFixed(2) : o.reasons[0]}`;
+    t.hidden = false;
+    let left = box.left - host.left + g.__x * s + 16, top = box.top - host.top + g.__y * s - 14;
+    if (left + t.offsetWidth > host.width - 8) left = box.left - host.left + g.__x * s - t.offsetWidth - 16;
+    t.style.left = left + "px"; t.style.top = top + "px";
+  }
+  function hideTip() { $("tip").hidden = true; }
+
+  // ---------------------------------------------------------------- transfer geometry
+  function geometry(o, r1, r2) {
+    const pts = [], burns = [];
+    const arc = (rp, ra, w, a, b, n = 220) => {
+      const p = 2 * rp * ra / (rp + ra), e = (ra - rp) / (ra + rp), start = pts.length ? 1 : 0;
+      for (let i = start; i <= n; i++) { const th = a + (b - a) * i / n; pts.push([p / (1 + e * Math.cos(th - w)), th]); }
+    };
+    let rmax = Math.max(r1, r2);
+    if (o.key === "low_thrust") {
+      const turns = 6, n = 700;
+      for (let i = 0; i <= n; i++) { const f = i / n; pts.push([r1 + (r2 - r1) * f, f * turns * 2 * Math.PI]); }
+    } else if (o.burns === 1) {
+      pts.push([r1, 0]); burns.push(0);
+    } else if (o.key === "hohmann" || o.key === "hohmann_split") {
+      if (r2 > r1) arc(r1, r2, 0, 0, Math.PI); else arc(r2, r1, Math.PI, 0, Math.PI);
+      burns.push(0, pts.length - 1);
+    } else if (o.key === "bielliptic") {
+      const rb = o.params.rb; rmax = Math.max(rmax, rb);
+      arc(r1, rb, 0, 0, Math.PI); burns.push(0, pts.length - 1);
+      arc(r2, rb, 0, Math.PI, 2 * Math.PI); burns.push(pts.length - 1);
+    } else if (o.key === "one_tangent") {
+      rmax = Math.max(rmax, o.ra);
+      if (o.raising) arc(o.rp, o.ra, 0, 0, o.nu); else arc(o.rp, o.ra, Math.PI, 0, Math.PI - o.nu);
+      burns.push(0, pts.length - 1);
+    }
+    return { pts, burns, rmax };
+  }
+  function renderGeo(m, res, animate) {
+    const svg = $("geo"); svg.innerHTML = "";
+    const o = res.opts.find((x) => x.key === selected) || res.opts[0];
+    const r1 = res.r1, r2 = res.r2, W = 360, H = 330, cx = W / 2, cy = H / 2;
+    const [main, sub] = splitName(o.name);
+    $("geoTitle").textContent = main + (sub ? ", " + sub : "");
+    const { pts, burns, rmax } = geometry(o, r1, r2);
+    const S = (Math.min(W, H) / 2 - 26) / rmax;
+    const P = ([r, th]) => [cx + r * Math.cos(th) * S, cy - r * Math.sin(th) * S];
+    el("circle", { cx, cy, r: Math.max(6378.137 * S, 3) }, svg, { fill: "var(--earth)" });
+    el("circle", { cx, cy, r: r1 * S }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+    if (Math.abs(r2 - r1) > 1e-6) el("circle", { cx, cy, r: r2 * S, "stroke-dasharray": "4 5" }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+    const c = col(o.key), XY = pts.map(P);
+    const markers = burns.map((idx, i) => {
+      const [x, y] = XY[idx], th = pts[idx][1], right = Math.cos(th) >= -0.2;
+      const g = el("g", { class: "burn" }, svg);
+      el("circle", { cx: x, cy: y, r: 5.5 }, g, { fill: c, stroke: "var(--surface)", strokeWidth: "2" });
+      el("text", { x: x + (right ? 10 : -10), y: y + (i === 0 ? 17 : -9), "text-anchor": right ? "start" : "end", "font-size": 12, "font-weight": 600 }, g, { fill: "var(--label-2)" })
+        .textContent = `Δv${i + 1}`;
+      return { g, idx };
+    });
+    if (XY.length < 2) {
+      markers.forEach((b) => b.g.classList.add("on"));
+      $("geoSub").textContent = `The plane change happens on the initial ${fmtKm(m.alt1)} km orbit. Top view, to scale.`;
+      return;
+    }
+    const cum = [0];
+    for (let i = 1; i < XY.length; i++) cum.push(cum[i - 1] + Math.hypot(XY[i][0] - XY[i - 1][0], XY[i][1] - XY[i - 1][1]));
+    const Ltot = cum[cum.length - 1];
+    const path = el("path", { d: "M" + XY.map((q) => q[0].toFixed(1) + " " + q[1].toFixed(1)).join("L"), class: "arc" }, svg, { stroke: c, strokeDasharray: Ltot.toFixed(1) });
+    svg.appendChild(path);
+    markers.forEach((b) => svg.appendChild(b.g));
+    const craft = el("circle", { r: 4.5, class: "craft" }, svg, { stroke: c });
+    const at = (s) => {
+      let lo = 0, hi = cum.length - 1;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] < s) lo = mid; else hi = mid; }
+      const f = cum[hi] > cum[lo] ? (s - cum[lo]) / (cum[hi] - cum[lo]) : 0;
+      return [XY[lo][0] + (XY[hi][0] - XY[lo][0]) * f, XY[lo][1] + (XY[hi][1] - XY[lo][1]) * f];
+    };
+    const fr = markers.map((b) => cum[b.idx] / Ltot);
+    spring("draw", 1, (p) => {
+      const q = Math.min(1, Math.max(0, p));
+      path.style.strokeDashoffset = (Ltot * (1 - q)).toFixed(2);
+      const [x, y] = at(q * Ltot);
+      craft.setAttribute("cx", x.toFixed(2)); craft.setAttribute("cy", y.toFixed(2));
+      craft.classList.toggle("done", q > 0.999);
+      markers.forEach((b, i) => b.g.classList.toggle("on", q >= fr[i] - 0.002));
+    }, animate ? { from: 0, response: 1.05, eps: 1e-4 } : { snap: true });
+    $("geoSub").textContent = o.key === "low_thrust"
+      ? `Schematic spiral: 6 turns drawn, about ${Math.round(o.revs).toLocaleString("en-US")} in flight.`
+      : `Top view, to scale. Solid: ${fmtKm(m.alt1)} km start orbit. Dashed: ${fmtKm(m.alt2)} km target.${m.di_deg > 0 ? ` The ${m.di_deg}° plane change is out of this view.` : ""}`;
+  }
+
+  function renderRules(res) {
+    $("rules").innerHTML = res.advice.map((a) => `<li>${ICON_INFO}<span>${a}</span></li>`).join("");
+  }
+
+  setInputs({});
+  run({});
+})();
+</script>
