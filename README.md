@@ -1,8 +1,10 @@
 # Orbital Manoeuvre Decision Support Tool
 
+[![tests](https://github.com/satwiksharma01/orbital-manoeuvre-decision-support/actions/workflows/tests.yml/badge.svg)](https://github.com/satwiksharma01/orbital-manoeuvre-decision-support/actions/workflows/tests.yml)
+
 **Which manoeuvre should a mission fly?** A decision-support tool that sizes five orbital transfers, optimises each one numerically, removes those that break the mission's constraints and ranks the rest by the mission's priorities. Built in MATLAB and Simulink, cross-checked in Python, with an interactive web planner.
 
-![Web planner](assets/web_planner.png)
+![Web planner demo: picking example missions re-ranks the manoeuvres and draws each transfer](assets/demo.gif)
 
 **[Try the live demo](https://satwiksharma01.github.io/orbital-manoeuvre-decision-support/web/)**
 
