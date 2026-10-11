@@ -69,9 +69,3 @@ node web/test_engine.js          # web engine regression test
 | `python/` | Reference implementation, validation and figure scripts |
 | `web/` | Self-contained web planner and its engine test |
 | `assets/` | Screenshots and result figures used in this README |
-
-## About
-
-Built by **Satwik Sharma** as the course-level assignment for ASE3004 Space Flight Mechanics (Project Option 38), VIT Bhopal University, 2026.
-
-References: Curtis, *Orbital Mechanics for Engineering Students*; Vallado, *Fundamentals of Astrodynamics and Applications*; Edelbaum (1961); Hwang & Yoon (1981, TOPSIS).
