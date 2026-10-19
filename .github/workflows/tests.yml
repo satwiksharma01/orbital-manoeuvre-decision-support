@@ -20,3 +20,13 @@ jobs:
         run: python python/validate.py
       - name: Web planner engine regression test
         run: node web/test_engine.js
+
+  matlab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: matlab-actions/setup-matlab@v2
+      - name: MATLAB validation suite (odst_tests)
+        uses: matlab-actions/run-command@v2
+        with:
+          command: cd matlab; assert(odst_tests() == 0, 'odst_tests failed')
