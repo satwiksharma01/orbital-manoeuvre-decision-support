@@ -45,7 +45,8 @@ class Mission:
     alt1: float = 400.0          # initial circular altitude, km
     alt2: float = 35786.0        # target circular altitude, km
     di_deg: float = 28.5         # inclination change, deg
-    dv_budget: float = 6.0       # km/s
+    dv_budget: float = 6.5       # km/s
+    margin_pct: float = 5.0      # Δv margin the budget must also cover, %
     tof_max_h: float = 24.0 * 200  # hours
     propulsion: str = "both"     # 'chemical' | 'electric' | 'both'
     isp_chem: float = 320.0      # s
@@ -280,9 +281,10 @@ def apply_rules(m: Mission, opts):
         o.feasible, o.reasons = o.applicable, ([] if o.applicable else [o.note])
         if not o.applicable:
             continue
-        if o.dv > m.dv_budget:
+        need = o.dv * (1 + m.margin_pct / 100)
+        if need > m.dv_budget:
             o.feasible = False
-            o.reasons.append(f"Δv {o.dv:.3f} > budget {m.dv_budget:.3f} km/s")
+            o.reasons.append(f"Δv {o.dv:.3f} + {m.margin_pct:g}% margin = {need:.3f} > budget {m.dv_budget:.3f} km/s")
         if o.tof > tof_max * (1 + 1e-6):
             o.feasible = False
             o.reasons.append(f"TOF {o.tof/3600:.1f} h > limit {m.tof_max_h:.1f} h")
@@ -410,7 +412,7 @@ def orbit_elements(y):
 # ------------------------------------------------------------------- report
 def print_table(m: Mission, opts):
     print(f"\nMission: alt {m.alt1:.0f} -> {m.alt2:.0f} km, Δi = {m.di_deg:.2f}°, "
-          f"budget {m.dv_budget} km/s, TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
+          f"budget {m.dv_budget} km/s (margin {m.margin_pct:g}%), TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
     hdr = f"{'Option':34s}{'Δv km/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{'WS':>7s}{'TOPSIS':>8s}  status"
     print(hdr); print("-" * len(hdr))
     for o in opts:

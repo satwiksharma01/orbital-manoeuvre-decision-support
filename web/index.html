@@ -297,6 +297,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <h2 class="group-title" id="g-limits">Constraints</h2>
         <div class="list">
           <label class="row" for="dv_budget"><span>Δv budget</span><span class="field"><input id="dv_budget" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km/s</span></span></label>
+          <label class="row" for="margin_pct"><span>Δv margin</span><span class="field"><input id="margin_pct" type="number" inputmode="decimal" min="0" max="100" step="any"><span class="unit">%</span></span></label>
           <label class="row" for="tof_max_h"><span>Maximum transfer time</span><span class="field"><input id="tof_max_h" type="number" inputmode="decimal" min="0" step="any"><span class="unit">h</span></span></label>
         </div>
         <p class="hint" id="hint" hidden>Enter a number in every highlighted field.</p>
@@ -526,7 +527,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       o.prop_frac = 1 - Math.exp(-o.dv / (o.isp * G0));
       o.reasons = []; o.feasible = o.applicable;
       if (!o.applicable) { o.reasons.push(o.note); continue; }
-      if (o.dv > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
+      const mg = m.margin_pct ?? 5, need = o.dv * (1 + mg / 100);
+      if (need > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} + ${mg}% margin = ${need.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
       if (o.tof > tofmax * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
       if (o.key === "low_thrust" && m.propulsion === "chemical") { o.feasible = false; o.reasons.push("no electric propulsion on board"); }
       if (o.key !== "low_thrust" && m.propulsion === "electric") { o.feasible = false; o.reasons.push("no high-thrust (chemical) propulsion on board"); }
@@ -586,7 +588,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const ICON_WARN = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 7v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="currentColor"/></svg>';
   const ICON_INFO = '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>';
 
-  const DEFAULT = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6, tof_max_h: 4800, rb_max: 384400,
+  const DEFAULT = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
                     propulsion: "both", isp_chem: 320, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced" };
   const EXAMPLES = [
     { label: "LEO → GEO", v: {} },
@@ -595,7 +597,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     { label: "All-electric GEO", v: { tof_max_h: 8760, preset: "Propellant-critical" } },
     { label: "60° plane change", v: { alt1: 500, alt2: 500, di_deg: 60, dv_budget: 10, tof_max_h: 4800, propulsion: "chemical", preset: "Propellant-critical" } },
   ];
-  const numIds = ["alt1", "alt2", "di_deg", "dv_budget", "tof_max_h", "rb_max", "isp_chem", "isp_ep", "accel_ep"];
+  const numIds = ["alt1", "alt2", "di_deg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "isp_ep", "accel_ep"];
 
   // ---------------------------------------------------------------- springs
   // Apple-style parameters: response (s) and damping ratio. Re-targeting keeps the

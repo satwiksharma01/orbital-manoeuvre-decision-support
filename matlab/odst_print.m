@@ -1,7 +1,7 @@
 function odst_print(m, opts, rec, advice)
 %ODST_PRINT Print the decision table, recommendation and rule advice.
-fprintf('\nMission: alt %.0f -> %.0f km, di = %.2f deg, budget %.2f km/s, TOF max %.1f h\n', ...
-        m.alt1, m.alt2, m.di_deg, m.dv_budget, m.tof_max_h);
+fprintf('\nMission: alt %.0f -> %.0f km, di = %.2f deg, budget %.2f km/s (margin %g%%), TOF max %.1f h\n', ...
+        m.alt1, m.alt2, m.di_deg, m.dv_budget, m.margin_pct, m.tof_max_h);
 fprintf('Weights [dv prop TOF cplx] = [%s], propulsion: %s\n', num2str(m.weights), m.propulsion);
 fprintf('%-38s %8s %11s %5s %7s %5s %6s %7s  %s\n', 'Option', 'dv km/s', 'TOF', ...
         'burns', 'mp/m0', 'cplx', 'WS', 'TOPSIS', 'status');

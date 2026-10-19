@@ -337,7 +337,7 @@ def fig_flowchart():
 
 
 if __name__ == "__main__":
-    leo_geo = Mission(alt1=400, alt2=35786, di_deg=28.5, dv_budget=6.0, tof_max_h=24 * 200)
+    leo_geo = Mission(alt1=400, alt2=35786, di_deg=28.5, dv_budget=6.5, tof_max_h=24 * 200)
     high_R = Mission(alt1=7000 - RE, alt2=105000 - RE, di_deg=0, dv_budget=6.0, tof_max_h=24 * 60,
                      propulsion="chemical", weights=WEIGHT_PRESETS["Propellant-critical"])
     rapid = Mission(alt1=400, alt2=800, di_deg=0, dv_budget=1.0, tof_max_h=0.6,

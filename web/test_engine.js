@@ -6,7 +6,7 @@ const src = html.match(/<script id="engine">([\s\S]*?)<\/script>/)[1];
 const module_ = { exports: {} };
 new Function("module", src)(module_);
 const O = module_.exports;
-const base = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6, tof_max_h: 4800, propulsion: "both", isp_chem: 320,
+const base = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, propulsion: "both", isp_chem: 320,
   isp_ep: 1600, accel_ep: 5e-4, rb_max: 384400, k_one_tangent: 1.5, weights: O.PRESETS["Balanced"] };
 // reference values printed by python/validate.py and odst.py
 const expect = [
@@ -26,6 +26,11 @@ for (const [m, dvs, rec] of expect) {
   }
   const ok = r.rec && r.rec.key === rec; fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] recommendation ${r.rec && r.rec.key} (ref ${rec})`);
+}
+for (const [budget, margin, want] of [[6, 0, true], [6, 5, false], [6.5, 5, true]]) {
+  const lt = O.evaluate({ ...base, dv_budget: budget, margin_pct: margin }).opts.find((o) => o.key === "low_thrust");
+  const ok = lt.feasible === want; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] budget ${budget} km/s, margin ${margin}%: low thrust feasible = ${lt.feasible}`);
 }
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);

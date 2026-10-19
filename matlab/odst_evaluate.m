@@ -109,9 +109,11 @@ for i = 1:numel(opts)
     if ~o.applicable
         r{end+1} = o.note; %#ok<AGROW>
     else
-        if o.dv > m.dv_budget
+        need = o.dv*(1 + m.margin_pct/100);
+        if need > m.dv_budget
             o.feasible = false;
-            r{end+1} = sprintf('dv %.3f > budget %.3f km/s', o.dv, m.dv_budget); %#ok<AGROW>
+            r{end+1} = sprintf('dv %.3f + %g%% margin = %.3f > budget %.3f km/s', ...
+                               o.dv, m.margin_pct, need, m.dv_budget); %#ok<AGROW>
         end
         if o.tof > tofmax*(1 + 1e-6)
             o.feasible = false;

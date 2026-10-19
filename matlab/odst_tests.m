@@ -39,6 +39,14 @@ for c = 1:numel(cases)
                m.alt1, m.alt2, m.di_deg, o.name, a, e, inc, dvSim, o.dv));
     end
 end
+fprintf('\n=== 3. Delta-v margin (low thrust needs 5.898 km/s for LEO -> GEO) ===\n');
+mc = [6.0 0 1; 6.0 5 0; 6.5 5 1];
+for i = 1:size(mc, 1)
+    opts = odst_evaluate(odst_mission('dv_budget', mc(i, 1), 'margin_pct', mc(i, 2)));
+    lt = opts(strcmp({opts.key}, 'low_thrust'));
+    report(lt.feasible == logical(mc(i, 3)), sprintf('budget %.1f km/s, margin %g%%: low thrust feasible = %d', ...
+           mc(i, 1), mc(i, 2), lt.feasible));
+end
 if nFail == 0
     fprintf('\nALL CHECKS PASSED\n');
 else

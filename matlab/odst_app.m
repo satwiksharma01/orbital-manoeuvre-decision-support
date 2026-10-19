@@ -14,7 +14,7 @@ C = odst_const();
 ARW = char(8594); DEG = char(176); DEL = char(916);
 CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = char(183);
 
-defaults = struct('alt1', 400, 'alt2', 35786, 'di_deg', 28.5, 'dv_budget', 6, 'tof_max_h', 4800, ...
+defaults = struct('alt1', 400, 'alt2', 35786, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced');
 examples = {
@@ -59,7 +59,7 @@ body = uigridlayout(root, [1 2], 'ColumnWidth', {340, '1x'}, 'Padding', [20 16 2
 
 % ================================================================ inputs (left)
 left = uigridlayout(body, [10 1], 'Padding', [0 0 0 0], 'RowSpacing', 6, 'BackgroundColor', T.bg);
-left.RowHeight = {18, 128, 22, 88, 22, 38, 22, 208, 22, 168};
+left.RowHeight = {18, 128, 22, 128, 22, 38, 22, 208, 22, 168};
 if isprop(left, 'Scrollable'), left.Scrollable = 'on'; end
 
 groupTitle(left, 'Orbits');
@@ -69,8 +69,9 @@ h.alt2 = numRow(g, 'Target altitude', defaults.alt2, [0 Inf], 'km');
 h.di   = numRow(g, 'Inclination change', defaults.di_deg, [0 180], 'deg');
 
 groupTitle(left, 'Constraints');
-g = listPanel(left, 2);
+g = listPanel(left, 3);
 h.dvb = numRow(g, [DEL 'v budget'], defaults.dv_budget, [0 Inf], 'km/s');
+h.mrg = numRow(g, [DEL 'v margin'], defaults.margin_pct, [0 100], '%');
 h.tof = numRow(g, 'Maximum transfer time', defaults.tof_max_h, [0 Inf], 'h');
 
 groupTitle(left, 'Propulsion on board');
@@ -169,7 +170,7 @@ update(false);
         fn = fieldnames(v);
         for f = 1:numel(fn), d.(fn{f}) = v.(fn{f}); end
         h.alt1.Value = d.alt1; h.alt2.Value = d.alt2; h.di.Value = d.di_deg;
-        h.dvb.Value = d.dv_budget; h.tof.Value = d.tof_max_h; h.rbm.Value = d.rb_max;
+        h.dvb.Value = d.dv_budget; h.mrg.Value = d.margin_pct; h.tof.Value = d.tof_max_h; h.rbm.Value = d.rb_max;
         h.ispc.Value = d.isp_chem; h.ispe.Value = d.isp_ep; h.acc.Value = d.accel_ep;
         prop = d.propulsion; setSeg(h.propSeg, prop);
         applyPreset(d.preset);
@@ -240,7 +241,7 @@ update(false);
         w = arrayfun(@(s) s.Value, h.w);
         if sum(w) <= 0, w = [1 1 1 1]; end
         m = odst_mission('alt1', h.alt1.Value, 'alt2', h.alt2.Value, 'di_deg', h.di.Value, ...
-            'dv_budget', h.dvb.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
+            'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
             'isp_chem', h.ispc.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
             'rb_max', h.rbm.Value, 'weights', w);
         [opts, rec, adv] = odst_evaluate(m);

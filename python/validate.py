@@ -55,7 +55,14 @@ for m in cases:
         print(f"[{'PASS' if good else 'FAIL'}] {m.alt1:.0f}->{m.alt2:.0f} km di={m.di_deg}: {o.name:30s} "
               f"a={a:10.2f} (target {m.r2:.2f}) e={e:.1e} i={inc:7.3f} dv_sim={dvsim:.5f} dv_model={o.dv:.5f}")
 
-print("\n=== 3. Mission case studies ===")
+print("\n=== 3. Δv margin (low thrust needs 5.898 km/s for LEO -> GEO) ===")
+for budget, margin, expect in [(6.0, 0, True), (6.0, 5, False), (6.5, 5, True)]:
+    lt = next(o for o in evaluate(Mission(dv_budget=budget, margin_pct=margin)) if o.key == "low_thrust")
+    ok = lt.feasible == expect
+    fails += not ok
+    print(f"[{'PASS' if ok else 'FAIL'}] budget {budget} km/s, margin {margin}%: low thrust feasible = {lt.feasible}")
+
+print("\n=== 4. Mission case studies ===")
 for m in cases:
     print_table(m, evaluate(m))
 
