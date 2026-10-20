@@ -29,6 +29,8 @@ COMPLEXITY = {
     "one_tangent": 2.5,
     "bielliptic": 3.0,
     "low_thrust": 4.0,
+    "apse": 1.5,
+    "lambert": 2.5,
 }
 
 WEIGHT_PRESETS = {
@@ -42,8 +44,11 @@ WEIGHT_PRESETS = {
 
 @dataclass
 class Mission:
-    alt1: float = 400.0          # initial circular altitude, km
-    alt2: float = 35786.0        # target circular altitude, km
+    alt1: float = 400.0          # initial altitude (periapsis if elliptical), km
+    alt2: float = 35786.0        # target altitude (periapsis if elliptical), km
+    apo1: float | None = None    # initial apoapsis altitude, km; None = circular
+    apo2: float | None = None    # target apoapsis altitude, km; None = circular
+    dw_deg: float = 0.0          # target apse line, deg from the start orbit's periapsis
     di_deg: float = 28.5         # inclination change, deg
     dv_budget: float = 6.5       # km/s
     margin_pct: float = 5.0      # Δv margin the budget must also cover, %
@@ -65,6 +70,18 @@ class Mission:
     def r2(self):
         return RE + self.alt2
 
+    @property
+    def ra1(self):
+        return RE + (self.alt1 if self.apo1 is None else self.apo1)
+
+    @property
+    def ra2(self):
+        return RE + (self.alt2 if self.apo2 is None else self.apo2)
+
+    @property
+    def elliptical(self):
+        return self.ra1 - self.r1 > ELL_TOL or self.ra2 - self.r2 > ELL_TOL
+
 
 @dataclass
 class Option:
@@ -78,6 +95,9 @@ class Option:
     applicable: bool = True
     note: str = ""
     burn_plan: list = field(default_factory=list)  # [(t, v_after, d_inc_rad, r_burn, dv_burn)]
+    vec_plan: list = field(default_factory=list)   # elliptical models: [(t, dv_vec)] from state y0
+    y0: object = None
+    legs: list = field(default_factory=list)       # [(r_burn, dv_burn)] for the gravity loss
     params: dict = field(default_factory=dict)
     # filled by the decision layer
     dv_loss: float = 0.0      # finite-burn gravity loss, km/s
@@ -221,14 +241,248 @@ def low_thrust(r1, r2, di, accel_ms2):
     return dv, tof
 
 
-def gravity_loss(plan, isp, tw):
+# ------------------------------------------- elliptical orbits and Lambert
+# Frame: the start orbit lies in the x-y plane with its periapsis on +x. The target
+# plane is turned by di about +x (the node line is the start orbit's apse line) and
+# the target periapsis sits dw from +x inside that plane. Burns are vectors here, so
+# these plans are (t, dv_vec) rows with the start state y0, not the circular format.
+ELL_TOL = 1e-6          # km: apoapsis - periapsis below this is a circular orbit
+DV_ZERO = 1e-9          # km/s: burns smaller than this are dropped
+
+
+def _on_node_line(ang):
+    return abs(math.sin(ang)) < 1e-9
+
+
+def orbit_basis(di, dw):
+    """Unit vectors to periapsis (P) and 90 deg ahead of it (Q) for a plane turned by
+    di about +x with periapsis dw from +x."""
+    x, y = np.array([1.0, 0.0, 0.0]), np.array([0.0, math.cos(di), math.sin(di)])
+    return math.cos(dw) * x + math.sin(dw) * y, -math.sin(dw) * x + math.cos(dw) * y
+
+
+def orbit_radius(rp, ra, th):
+    if abs(math.cos(th) - 1) < 1e-12:
+        return rp
+    if abs(math.cos(th) + 1) < 1e-12:
+        return ra
+    e, p = (ra - rp) / (ra + rp), 2 * rp * ra / (rp + ra)
+    return p / (1 + e * math.cos(th))
+
+
+def orbit_state(rp, ra, P, Q, th):
+    """Position and velocity at true anomaly th."""
+    e, p = (ra - rp) / (ra + rp), 2 * rp * ra / (rp + ra)
+    r = orbit_radius(rp, ra, th)
+    return (r * (math.cos(th) * P + math.sin(th) * Q),
+            math.sqrt(MU / p) * (-math.sin(th) * P + (e + math.cos(th)) * Q))
+
+
+def stumpff(z):
+    if z > 1e-8:
+        s = math.sqrt(z)
+        return (1 - math.cos(s)) / z, (s - math.sin(s)) / s ** 3
+    if z < -1e-8:
+        s = math.sqrt(-z)
+        return (math.cosh(s) - 1) / -z, (math.sinh(s) - s) / s ** 3
+    return 0.5 - z / 24, 1 / 6 - z / 120
+
+
+def lambert(r1v, r2v, dt):
+    """Single-revolution prograde Lambert problem (transfer angular momentum along +z),
+    universal variables (Curtis Algorithm 5.2) with bisection on z (Vallado's
+    bracketing). Returns (v1, v2), or None if there is no solution."""
+    r1, r2 = np.linalg.norm(r1v), np.linalg.norm(r2v)
+    th = math.acos(max(-1.0, min(1.0, np.dot(r1v, r2v) / (r1 * r2))))
+    if np.cross(r1v, r2v)[2] < 0:
+        th = 2 * math.pi - th
+    if 1 - math.cos(th) < 1e-14:
+        return None
+    A = math.sin(th) * math.sqrt(r1 * r2 / (1 - math.cos(th)))
+    if abs(A) < 1e-12:
+        return None
+
+    def y_of(z):
+        C, S = stumpff(z)
+        return r1 + r2 + A * (z * S - 1) / math.sqrt(C), C, S
+
+    def tof(z):
+        y, C, S = y_of(z)
+        if y < 0:
+            return -math.inf
+        x = math.sqrt(y / C)
+        return (x ** 3 * S + A * math.sqrt(y)) / math.sqrt(MU)
+
+    lo, hi = -4 * math.pi, 4 * math.pi ** 2 - 1e-4   # C(z) -> 0 at 4 pi^2
+    while tof(lo) > dt:                       # very fast: needs a more hyperbolic bracket
+        lo *= 2
+        if lo < -1e5:
+            return None
+    if tof(hi) < dt:
+        return None
+    for _ in range(200):
+        z = 0.5 * (lo + hi)
+        if tof(z) < dt:
+            lo = z
+        else:
+            hi = z
+        if hi - lo < 1e-13 * max(1.0, abs(z)):
+            break
+    y = y_of(0.5 * (lo + hi))[0]
+    f, g, gdot = 1 - y / r1, A * math.sqrt(y / MU), 1 - y / r2
+    return (r2v - f * r1v) / g, (gdot * r2v - r1v) / g
+
+
+def apse_transfer(rp1, ra1, rp2, ra2, di, dw):
+    """Two-impulse transfer from an apsis of the start orbit to the opposite direction
+    on the target orbit, with the plane change split optimally between the burns.
+    Returns (dict, "") or (None, reason)."""
+    circ1, circ2 = ra1 - rp1 < ELL_TOL, ra2 - rp2 < ELL_TOL
+    if not (circ1 or circ2 or _on_node_line(dw)):
+        return None, "apse lines not aligned (Δω must be 0° or 180°)"
+    dirs = [dw, dw + math.pi] if circ1 and not circ2 else [0.0, math.pi]
+    if di > 0 and not all(_on_node_line(d) for d in dirs):
+        return None, "a plane change needs both burns on the node line (Δω must be 0° or 180°)"
+    P1, Q1 = orbit_basis(0.0, 0.0)
+    P2, Q2 = orbit_basis(di, dw)
+    a1, a2 = (rp1 + ra1) / 2, (rp2 + ra2) / 2
+    best = None
+    for phi in dirs:
+        th2 = phi + math.pi - dw
+        rA, rB = orbit_radius(rp1, ra1, phi), orbit_radius(rp2, ra2, th2)
+        at = (rA + rB) / 2
+        v1, vtA, vtB, v2 = vvis(rA, a1), vvis(rA, at), vvis(rB, at), vvis(rB, a2)
+        cost = lambda s: combined_burn(v1, vtA, s * di) + combined_burn(vtB, v2, (1 - s) * di)
+        cands = [0.0, 1.0]
+        if di > 0:
+            cands.append(float(minimize_scalar(cost, bounds=(0, 1), method="bounded",
+                                               options={"xatol": 1e-10}).x))
+        s = min(cands, key=cost)
+        if best is None or cost(s) < best[0] - 1e-12:
+            best = (cost(s), phi, th2, rA, rB, at, v1, vtA, vtB, v2, s)
+    _, phi, th2, rA, rB, at, v1, vtA, vtB, v2, s = best
+    dv1, dv2 = combined_burn(v1, vtA, s * di), combined_burn(vtB, v2, (1 - s) * di)
+    Rt = np.array([[1, 0, 0], [0, math.cos(s * di), -math.sin(s * di)], [0, math.sin(s * di), math.cos(s * di)]])
+    along = lambda ang: Rt @ np.array([-math.sin(ang), math.cos(ang), 0.0])
+    r1v, v1v = orbit_state(rp1, ra1, P1, Q1, phi)
+    rBv = Rt @ np.array([rB * math.cos(phi + math.pi), rB * math.sin(phi + math.pi), 0.0])
+    vB = vtB * along(phi + math.pi)
+    dv1v = vtA * along(phi) - v1v
+    dv2v = orbit_state(rp2, ra2, P2, Q2, th2)[1] - vB
+    tof = math.pi * math.sqrt(at ** 3 / MU)
+    keep1, keep2 = dv1 > DV_ZERO, dv2 > DV_ZERO
+    if keep1 and keep2:
+        y0, plan, legs = np.concatenate([r1v, v1v]), [(0.0, dv1v), (tof, dv2v)], [(rA, dv1), (rB, dv2)]
+    elif keep2:                                   # already on the transfer orbit: one burn on arrival
+        y0, plan, legs, tof = np.concatenate([rBv, vB]), [(0.0, dv2v)], [(rB, dv2)], 0.0
+    else:                                         # the first burn lands on the target orbit
+        y0, plan, legs, tof = np.concatenate([r1v, v1v]), [(0.0, dv1v)] if keep1 else [], [(rA, dv1)] if keep1 else [], 0.0
+    return {"dv": dv1 * keep1 + dv2 * keep2, "tof": tof, "burns": len(plan), "y0": y0, "plan": plan,
+            "legs": legs, "split_at_dep": s, "depart_deg": math.degrees(phi) % 360,
+            "rA": rA, "rB": rB}, ""
+
+
+def _nelder_mead(f, x0, steps, iters=400, tol=1e-12):
+    """Plain Nelder-Mead (reflect 1, expand 2, contract 0.5, shrink 0.5), written out so
+    the MATLAB and web engines can run the identical search."""
+    pts = [list(x0)] + [[x0[j] + (steps[j] if j == i else 0.0) for j in range(len(x0))] for i in range(len(x0))]
+    vals = [f(p) for p in pts]
+    for _ in range(iters):
+        order = sorted(range(len(pts)), key=lambda i: vals[i])
+        pts, vals = [pts[i] for i in order], [vals[i] for i in order]
+        if abs(vals[-1] - vals[0]) < tol:
+            break
+        n = len(x0)
+        c = [sum(p[j] for p in pts[:-1]) / n for j in range(n)]
+        xr = [c[j] + (c[j] - pts[-1][j]) for j in range(n)]
+        fr = f(xr)
+        if fr < vals[0]:
+            xe = [c[j] + 2 * (c[j] - pts[-1][j]) for j in range(n)]
+            fe = f(xe)
+            pts[-1], vals[-1] = (xe, fe) if fe < fr else (xr, fr)
+        elif fr < vals[-2]:
+            pts[-1], vals[-1] = xr, fr
+        else:
+            xc = [c[j] + 0.5 * (pts[-1][j] - c[j]) for j in range(n)]
+            fc = f(xc)
+            if fc < vals[-1]:
+                pts[-1], vals[-1] = xc, fc
+            else:
+                pts = [pts[0]] + [[pts[0][j] + 0.5 * (p[j] - pts[0][j]) for j in range(n)] for p in pts[1:]]
+                vals = [vals[0]] + [f(p) for p in pts[1:]]
+    i = min(range(len(pts)), key=lambda k: vals[k])
+    return pts[i], vals[i]
+
+
+def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
+    """Minimum-dv two-impulse Lambert transfer over departure true anomaly, arrival true
+    anomaly and transfer time (60 s to min(tof_max, the longer orbital period)).
+    Transfers within 0.5 deg of 0 or 180 deg are skipped: there the transfer plane is
+    undefined. Grid n_grid x n_grid with a golden-section search on time per cell,
+    then Nelder-Mead from the best cell."""
+    P1, Q1 = orbit_basis(0.0, 0.0)
+    P2, Q2 = orbit_basis(di, dw)
+    tmin = 60.0
+    tmax = min(tof_max, max(2 * math.pi * math.sqrt(((rp + ra) / 2) ** 3 / MU) for rp, ra in ((rp1, ra1), (rp2, ra2))))
+    if tmax <= tmin:
+        return None
+    gap = math.sin(math.radians(0.5))
+
+    def solve(x):
+        th1, th2, u = x
+        if not 0.0 <= u <= 1.0:
+            return math.inf, None
+        r1v, v1v = orbit_state(rp1, ra1, P1, Q1, th1)
+        r2v, v2v = orbit_state(rp2, ra2, P2, Q2, th2)
+        if np.linalg.norm(np.cross(r1v, r2v)) < gap * np.linalg.norm(r1v) * np.linalg.norm(r2v):
+            return math.inf, None
+        sol = lambert(r1v, r2v, tmin + u * (tmax - tmin))
+        if sol is None:
+            return math.inf, None
+        dv1v, dv2v = sol[0] - v1v, v2v - sol[1]
+        return np.linalg.norm(dv1v) + np.linalg.norm(dv2v), (r1v, v1v, r2v, dv1v, dv2v)
+
+    cost = lambda x: solve(x)[0]
+    g = (math.sqrt(5) - 1) / 2
+    best = (math.inf, None)
+    for i in range(n_grid):
+        for j in range(n_grid):
+            th1, th2 = 2 * math.pi * i / n_grid, 2 * math.pi * j / n_grid
+            a, b = 0.0, 1.0
+            c, d = b - g * (b - a), a + g * (b - a)
+            fc, fd = cost((th1, th2, c)), cost((th1, th2, d))
+            for _ in range(25):
+                if fc < fd:
+                    b, d, fd = d, c, fc
+                    c = b - g * (b - a)
+                    fc = cost((th1, th2, c))
+                else:
+                    a, c, fc = c, d, fd
+                    d = a + g * (b - a)
+                    fd = cost((th1, th2, d))
+            u = (a + b) / 2
+            fu = cost((th1, th2, u))
+            if fu < best[0]:
+                best = (fu, [th1, th2, u])
+    if not math.isfinite(best[0]):
+        return None
+    step = 2 * math.pi / n_grid
+    x, fx = _nelder_mead(cost, best[1], [step / 2, step / 2, 0.05])
+    _, (r1v, v1v, r2v, dv1v, dv2v) = solve(x)
+    T = tmin + x[2] * (tmax - tmin)
+    return {"dv": fx, "tof": T, "burns": 2, "y0": np.concatenate([r1v, v1v]), "plan": [(0.0, dv1v), (T, dv2v)],
+            "legs": [(np.linalg.norm(r1v), np.linalg.norm(dv1v)), (np.linalg.norm(r2v), np.linalg.norm(dv2v))],
+            "th1_deg": math.degrees(x[0]) % 360, "th2_deg": math.degrees(x[1]) % 360,
+            "time_limited": x[2] > 1 - 1e-6}
+
+
+def gravity_loss(legs, isp, tw):
     """Finite-burn gravity loss, Robbins (1966): dv * (w tau)^2 / 24 per burn, with
     w the circular rate at the burn radius and tau the burn time at constant thrust
     T = tw * m0 * g0. Matches a fixed-attitude burn within ~5 % for tw >= 0.2 and
     overestimates a velocity-tracking burn about 2x (validate.py, section 4)."""
     ve, m, loss = isp * G0, 1.0, 0.0
-    for b in plan:
-        r, dv = b[3], b[4]
+    for r, dv in legs:
         tau = isp / tw * m * (1.0 - math.exp(-dv / ve))
         loss += dv * (math.sqrt(MU / r ** 3) * tau) ** 2 / 24.0
         m *= math.exp(-dv / ve)
@@ -237,6 +491,48 @@ def gravity_loss(plan, isp, tw):
 
 # ---------------------------------------------------------------- evaluation
 def evaluate(m: Mission):
+    opts = _elliptical_options(m) if m.elliptical else _circular_options(m)
+    for o in opts:
+        o.prop_frac = 1.0 - math.exp(-o.dv / (o.isp * G0))
+        if o.burn_plan:
+            o.legs = [(b[3], b[4]) for b in o.burn_plan]
+        if o.legs:
+            o.dv_loss = gravity_loss(o.legs, o.isp, m.tw_chem)
+    apply_rules(m, opts)
+    score(m, opts)
+    return opts
+
+
+def _elliptical_options(m: Mission):
+    """Hohmann, bi-elliptic, one-tangent and Edelbaum assume circular orbits, so an
+    elliptical mission is sized with the apse-to-apse and Lambert models only."""
+    if m.apo1 is not None and m.apo1 < m.alt1 or m.apo2 is not None and m.apo2 < m.alt2:
+        raise ValueError("apoapsis altitude below periapsis altitude")
+    di, dw = math.radians(m.di_deg), math.radians(m.dw_deg)
+    opts = []
+    res, why = apse_transfer(m.r1, m.ra1, m.r2, m.ra2, di, dw)
+    o = Option("apse", "Apse-to-apse (optimal Δi split)", res["dv"] if res else math.nan, res["tof"] if res else math.nan,
+               res["burns"] if res else 0, m.isp_chem, COMPLEXITY["apse"])
+    if res:
+        o.vec_plan, o.y0, o.legs = res["plan"], res["y0"], res["legs"]
+        o.params = {k: res[k] for k in ("split_at_dep", "depart_deg", "rA", "rB")}
+    else:
+        o.applicable, o.note = False, why
+    opts.append(o)
+    res = lambert_optimal(m.r1, m.ra1, m.r2, m.ra2, di, dw, m.tof_max_h * 3600.0)
+    o = Option("lambert", "Lambert (minimum Δv)", res["dv"] if res else math.nan, res["tof"] if res else math.nan,
+               2, m.isp_chem, COMPLEXITY["lambert"])
+    if res:
+        o.vec_plan, o.y0, o.legs = res["plan"], res["y0"], res["legs"]
+        o.params = {k: res[k] for k in ("th1_deg", "th2_deg", "time_limited")}
+        o.note = "time limit sets the transfer time" if res["time_limited"] else ""
+    else:
+        o.applicable, o.note = False, "no single-revolution Lambert transfer within the time limit"
+    opts.append(o)
+    return opts
+
+
+def _circular_options(m: Mission):
     r1, r2, di = m.r1, m.r2, math.radians(m.di_deg)
     tof_max = m.tof_max_h * 3600.0
     opts = []
@@ -281,13 +577,6 @@ def evaluate(m: Mission):
     dv, tof = low_thrust(r1, r2, di, m.accel_ep)
     opts.append(Option("low_thrust", "Low-thrust spiral (Edelbaum)", dv, tof, 0, m.isp_ep,
                        COMPLEXITY["low_thrust"]))
-
-    for o in opts:
-        o.prop_frac = 1.0 - math.exp(-o.dv / (o.isp * G0))
-        if o.burn_plan:
-            o.dv_loss = gravity_loss(o.burn_plan, o.isp, m.tw_chem)
-    apply_rules(m, opts)
-    score(m, opts)
     return opts
 
 
@@ -317,6 +606,14 @@ def apply_rules(m: Mission, opts):
 
 def rule_advice(m: Mission):
     """Textbook rules of thumb used as the 'rule-based decision matrix'."""
+    if m.elliptical:
+        adv = ["Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume circular "
+               "orbits, so the apse-to-apse and Lambert transfers are sized instead."]
+        if apse_transfer(m.r1, m.ra1, m.r2, m.ra2, math.radians(m.di_deg), math.radians(m.dw_deg))[0]:
+            adv.append("Apse lines aligned: a transfer between apsides is available, usually the cheapest.")
+        else:
+            adv.append(f"Apse lines {m.dw_deg:g}° apart: only a Lambert transfer is offered.")
+        return adv
     r1, r2 = m.r1, m.r2
     R = max(r1, r2) / min(r1, r2)
     adv = []
@@ -419,6 +716,36 @@ def simulate(r1, plan, coast_after=0.0, n_out=2000):
     return np.concatenate(ts), np.vstack(ys), y, dv_used
 
 
+def simulate_vec(y0, plan, coast_after=0.0, n_out=2000):
+    """Propagate a vector burn plan [(t, dv_vec)] from state y0 (two-body)."""
+    y, t0, ts, ys, dv_used = np.array(y0, float), 0.0, [], [], 0.0
+    t_end = (plan[-1][0] if plan else 0.0) + coast_after
+    for tb, dv in plan + [(t_end, None)]:
+        if tb > t0:
+            sol = solve_ivp(_twobody, (t0, tb), y, rtol=1e-11, atol=1e-11, dense_output=True)
+            tt = np.linspace(t0, tb, max(int(n_out * (tb - t0) / t_end), 50))
+            ts.append(tt); ys.append(sol.sol(tt).T)
+            y = sol.y[:, -1].copy()
+        if dv is not None:
+            y[3:] += dv
+            dv_used += np.linalg.norm(dv)
+        t0 = tb
+    if not ts:
+        ts, ys = [np.array([0.0])], [y[None, :]]
+    return np.concatenate(ts), np.vstack(ys), y, dv_used
+
+
+def target_mismatch(y, rp, ra, di, dw):
+    """Relative error of angular momentum and absolute error of the eccentricity vector
+    between state y and the orbit (rp, ra) in the plane turned by di, periapsis at dw."""
+    r, v = y[:3], y[3:]
+    h = np.cross(r, v)
+    e = np.cross(v, h) / MU - r / np.linalg.norm(r)
+    P, Q = orbit_basis(di, dw)
+    ht = math.sqrt(MU * 2 * rp * ra / (rp + ra)) * np.cross(P, Q)
+    return np.linalg.norm(h - ht) / np.linalg.norm(ht), np.linalg.norm(e - (ra - rp) / (ra + rp) * P)
+
+
 def orbit_elements(y):
     r, v = y[:3], y[3:]
     h = np.cross(r, v)
@@ -430,7 +757,10 @@ def orbit_elements(y):
 
 # ------------------------------------------------------------------- report
 def print_table(m: Mission, opts):
-    print(f"\nMission: alt {m.alt1:.0f} -> {m.alt2:.0f} km, Δi = {m.di_deg:.2f}°, "
+    o1 = f"{m.alt1:.0f}" if m.apo1 is None else f"{m.alt1:.0f} x {m.apo1:.0f}"
+    o2 = f"{m.alt2:.0f}" if m.apo2 is None else f"{m.alt2:.0f} x {m.apo2:.0f}"
+    dw = f", Δω = {m.dw_deg:g}°" if m.elliptical else ""
+    print(f"\nMission: alt {o1} -> {o2} km, Δi = {m.di_deg:.2f}°{dw}, "
           f"budget {m.dv_budget} km/s (margin {m.margin_pct:g}%, T/W {m.tw_chem:g}), TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
     hdr = f"{'Option':34s}{'Δv km/s':>9s}{'loss m/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{'WS':>7s}{'TOPSIS':>8s}  status"
     print(hdr); print("-" * len(hdr))
