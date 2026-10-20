@@ -4,14 +4,14 @@ function [dv, tof, nburns, plan] = odst_hohmann(r1, r2, di, split)
 %   r1, r2 [km], di [rad]. split = fraction of di performed at the r1 burn.
 %   split = [] (default) applies the classical rule: whole plane change at the
 %   burn on the larger radius, where the orbital speed is lowest.
-%   plan = [t_burn, speed_after_burn, plane_rotation] per burn (one row each).
+%   plan = [t_burn, speed_after_burn, plane_rotation, r_burn, dv_burn] per burn.
 C = odst_const(); mu = C.MU;
 if nargin < 4 || isempty(split)
     split = double(r2 < r1);
 end
 if abs(r2 - r1) < 1e-6                 % degenerate: pure plane change at a node
     v = sqrt(mu/r1);
-    dv = 2*v*sin(di/2); tof = 0; nburns = 1; plan = [0, v, di];
+    dv = 2*v*sin(di/2); tof = 0; nburns = 1; plan = [0, v, di, r1, dv];
     return
 end
 a   = (r1 + r2)/2;
@@ -22,6 +22,6 @@ dv2 = odst_combined(vt2, v2, (1 - split)*di);
 dv  = dv1 + dv2;
 tof = pi*sqrt(a^3/mu);
 nburns = 2;
-plan = [0,   vt1, split*di;
-        tof, v2,  (1 - split)*di];
+plan = [0,   vt1, split*di,       r1, dv1;
+        tof, v2,  (1 - split)*di, r2, dv2];
 end

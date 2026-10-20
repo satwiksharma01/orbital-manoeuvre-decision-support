@@ -15,7 +15,7 @@ ARW = char(8594); DEG = char(176); DEL = char(916);
 CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = char(183);
 
 defaults = struct('alt1', 400, 'alt2', 35786, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
-                  'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'isp_ep', 1600, ...
+                  'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced');
 examples = {
     ['LEO ' ARW ' GEO'],         struct()
@@ -59,7 +59,7 @@ body = uigridlayout(root, [1 2], 'ColumnWidth', {340, '1x'}, 'Padding', [20 16 2
 
 % ================================================================ inputs (left)
 left = uigridlayout(body, [10 1], 'Padding', [0 0 0 0], 'RowSpacing', 6, 'BackgroundColor', T.bg);
-left.RowHeight = {18, 128, 22, 128, 22, 38, 22, 208, 22, 168};
+left.RowHeight = {18, 128, 22, 128, 22, 38, 22, 208, 22, 208};
 if isprop(left, 'Scrollable'), left.Scrollable = 'on'; end
 
 groupTitle(left, 'Orbits');
@@ -92,8 +92,9 @@ for k = 1:4
 end
 
 groupTitle(left, 'Engine and limits');
-g = listPanel(left, 4);
+g = listPanel(left, 5);
 h.ispc = numRow(g, 'Chemical Isp', defaults.isp_chem, [1 Inf], 's');
+h.tw   = numRow(g, 'Chemical thrust/weight', defaults.tw_chem, [0.01 Inf], '');
 h.ispe = numRow(g, 'Electric Isp', defaults.isp_ep, [1 Inf], 's');
 h.acc  = numRow(g, 'Electric thrust F/m', defaults.accel_ep, [1e-7 1], ['m/s' char(178)]);
 h.rbm  = numRow(g, 'Max bi-elliptic apoapsis', defaults.rb_max, [1 Inf], 'km');
@@ -171,7 +172,7 @@ update(false);
         for f = 1:numel(fn), d.(fn{f}) = v.(fn{f}); end
         h.alt1.Value = d.alt1; h.alt2.Value = d.alt2; h.di.Value = d.di_deg;
         h.dvb.Value = d.dv_budget; h.mrg.Value = d.margin_pct; h.tof.Value = d.tof_max_h; h.rbm.Value = d.rb_max;
-        h.ispc.Value = d.isp_chem; h.ispe.Value = d.isp_ep; h.acc.Value = d.accel_ep;
+        h.ispc.Value = d.isp_chem; h.tw.Value = d.tw_chem; h.ispe.Value = d.isp_ep; h.acc.Value = d.accel_ep;
         prop = d.propulsion; setSeg(h.propSeg, prop);
         applyPreset(d.preset);
         manual = false;
@@ -242,7 +243,7 @@ update(false);
         if sum(w) <= 0, w = [1 1 1 1]; end
         m = odst_mission('alt1', h.alt1.Value, 'alt2', h.alt2.Value, 'di_deg', h.di.Value, ...
             'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
-            'isp_chem', h.ispc.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
+            'isp_chem', h.ispc.Value, 'tw_chem', h.tw.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
             'rb_max', h.rbm.Value, 'weights', w);
         [opts, rec, adv] = odst_evaluate(m);
         lastM = m; lastOpts = opts; lastRec = rec; lastAdv = adv;

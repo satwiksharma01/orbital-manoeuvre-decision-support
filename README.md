@@ -14,7 +14,7 @@ Given an initial and a target circular orbit, an inclination change, a Δv budge
 
 1. **Models five candidates:** Hohmann, Hohmann with an optimised plane-change split, bi-elliptic, one-tangent burn and an Edelbaum low-thrust spiral.
 2. **Optimises each one:** the plane-change split (`fminbnd`), the bi-elliptic apoapsis under a time limit (grid search + `fminbnd` + `fzero`) and the cheapest fast transfer that meets a deadline (`fzero`).
-3. **Applies rules:** hard constraints (Δv with a margin, default 5 %, time, propulsion) plus textbook rules such as the 11.94 / 15.58 Hohmann vs bi-elliptic thresholds.
+3. **Applies rules:** hard constraints (Δv plus a finite-burn gravity-loss estimate and a margin, default 5 %, time, propulsion) plus textbook rules such as the 11.94 / 15.58 Hohmann vs bi-elliptic thresholds.
 4. **Ranks the survivors:** weighted-sum scoring cross-checked with TOPSIS, with presets for balanced, propellant-critical, time-critical and low-complexity missions.
 
 ## Results
@@ -50,7 +50,7 @@ This is an early trade-study and teaching tool: it tells you which family of tra
 |---|---|
 | Start and target orbits are circular | Elliptical targets such as GTO or Molniya |
 | Two-body gravity | J2 (RAAN drifts by degrees a day in LEO) and drag below about 500 km |
-| Burns are instantaneous | Gravity losses. The Simulink check bounds the error, but none is added to the Δv budget |
+| Burns are impulsive, with a gravity-loss estimate | The loss uses Robbins' approximation from the thrust-to-weight input (default 0.5). It matches a fixed-attitude finite burn within 5 % for T/W ≥ 0.2, overestimates a velocity-tracking burn about 2×, and underestimates below T/W ≈ 0.1 |
 | Burn timing is ignored | Phasing, rendezvous and launch windows |
 | Low thrust is Edelbaum at constant acceleration | Power limits, eclipses and acceleration rising as propellant is used |
 | A fixed Δv margin (default 5 %) | Uncertainty in Isp, thrust and pointing |

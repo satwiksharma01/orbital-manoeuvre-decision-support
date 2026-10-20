@@ -47,6 +47,11 @@ for i = 1:size(mc, 1)
     report(lt.feasible == logical(mc(i, 3)), sprintf('budget %.1f km/s, margin %g%%: low thrust feasible = %d', ...
            mc(i, 1), mc(i, 2), lt.feasible));
 end
+fprintf('\n=== 4. Gravity loss (Robbins), same values as python/validate.py ===\n');
+r1 = RE + 400; at = (r1 + 42164)/2;
+dv1 = sqrt(C.MU*(2/r1 - 1/at)) - sqrt(C.MU/r1);
+check('LEO->GEO first burn loss, T/W 0.5 [m/s]', 1e3*odst_gravity_loss([0 0 0 r1 dv1], 320, 0.5), 14.94524, 1e-3);
+check('LEO->GEO first burn loss, T/W 0.2 [m/s]', 1e3*odst_gravity_loss([0 0 0 r1 dv1], 320, 0.2), 93.40775, 1e-3);
 if nFail == 0
     fprintf('\nALL CHECKS PASSED\n');
 else

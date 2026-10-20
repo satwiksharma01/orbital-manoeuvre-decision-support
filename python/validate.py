@@ -2,8 +2,12 @@
 import math
 import sys
 
-from odst import (MU, RE, Mission, bielliptic, evaluate, hohmann, one_tangent,
-                  orbit_elements, print_table, simulate, vcirc)
+import numpy as np
+from scipy.integrate import solve_ivp
+from scipy.optimize import brentq
+
+from odst import (G0, MU, RE, Mission, bielliptic, evaluate, gravity_loss, hohmann, one_tangent,
+                  orbit_elements, print_table, simulate, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 fails = 0
@@ -62,7 +66,36 @@ for budget, margin, expect in [(6.0, 0, True), (6.0, 5, False), (6.5, 5, True)]:
     fails += not ok
     print(f"[{'PASS' if ok else 'FAIL'}] budget {budget} km/s, margin {margin}%: low thrust feasible = {lt.feasible}")
 
-print("\n=== 4. Mission case studies ===")
+print("\n=== 4. Gravity loss: Robbins estimate vs numerical finite burn ===")
+
+
+def finite_apoapsis(r1, tau, tw, isp):
+    """Constant thrust at a fixed attitude (along the impulsive burn), centred on the burn point."""
+    ve, a0 = isp * G0, tw * G0
+    n, v = math.sqrt(MU / r1 ** 3), vcirc(r1)
+    th = -n * tau / 2
+    y0 = [r1 * math.cos(th), r1 * math.sin(th), -v * math.sin(th), v * math.cos(th)]
+    f = lambda t, y: [y[2], y[3], -MU * y[0] / math.hypot(y[0], y[1]) ** 3,
+                      -MU * y[1] / math.hypot(y[0], y[1]) ** 3 + a0 / (1 - a0 / ve * t)]
+    y = solve_ivp(f, (0, tau), y0, rtol=1e-11, atol=1e-11).y[:, -1]
+    r, eps = math.hypot(y[0], y[1]), (y[2] ** 2 + y[3] ** 2) / 2 - MU / math.hypot(y[0], y[1])
+    if eps >= 0:
+        return math.inf                                    # escaped: overshoot
+    a = -MU / (2 * eps)
+    h = y[0] * y[3] - y[1] * y[2]
+    return a * (1 + math.sqrt(max(0.0, 1 - h * h / (MU * a))))
+
+
+r1, r2, isp = RE + 400, 42164.0, 320.0
+dv1 = vvis(r1, (r1 + r2) / 2) - vcirc(r1)
+for tw in (0.5, 0.2):
+    est = gravity_loss([(0.0, 0.0, 0.0, r1, dv1)], isp, tw)
+    tau0 = isp / tw * (1 - math.exp(-dv1 / (isp * G0)))
+    tau = brentq(lambda t: finite_apoapsis(r1, t, tw, isp) - r2, tau0, 1.3 * tau0, xtol=1e-6)
+    num = -isp * G0 * math.log(1 - tw / isp * tau) - dv1
+    check(f"LEO->GEO first burn loss, T/W {tw} [m/s] (Robbins vs numerical)", 1e3 * est, 1e3 * num, 0.1 * 1e3 * num)
+
+print("\n=== 5. Mission case studies ===")
 for m in cases:
     print_table(m, evaluate(m))
 

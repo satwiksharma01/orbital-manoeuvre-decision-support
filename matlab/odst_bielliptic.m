@@ -10,7 +10,7 @@ t1 = pi*sqrt(a1^3/mu);  t2 = pi*sqrt(a2^3/mu);
 dv = dv1 + dv2 + dv3;
 tof = t1 + t2;
 nburns = 3;
-plan = [0,       vv(r1, a1),   0;
-        t1,      vv(rb, a2),   di;
-        t1 + t2, sqrt(mu/r2),  0];
+plan = [0,       vv(r1, a1),   0,  r1, dv1;
+        t1,      vv(rb, a2),   di, rb, dv2;
+        t1 + t2, sqrt(mu/r2),  0,  r2, dv3];
 end

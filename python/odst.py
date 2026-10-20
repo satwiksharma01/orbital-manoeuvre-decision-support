@@ -50,6 +50,7 @@ class Mission:
     tof_max_h: float = 24.0 * 200  # hours
     propulsion: str = "both"     # 'chemical' | 'electric' | 'both'
     isp_chem: float = 320.0      # s
+    tw_chem: float = 0.5         # chemical thrust-to-weight at departure, T / (m0 g0)
     isp_ep: float = 1600.0       # s
     accel_ep: float = 5e-4       # m/s^2 low-thrust acceleration (F/m)
     rb_max: float = 384400.0     # bi-elliptic apoapsis upper bound, km (lunar distance)
@@ -76,9 +77,10 @@ class Option:
     complexity: float
     applicable: bool = True
     note: str = ""
-    burn_plan: list = field(default_factory=list)  # [(t, v_after, d_inc_rad)]
+    burn_plan: list = field(default_factory=list)  # [(t, v_after, d_inc_rad, r_burn, dv_burn)]
     params: dict = field(default_factory=dict)
     # filled by the decision layer
+    dv_loss: float = 0.0      # finite-burn gravity loss, km/s
     prop_frac: float = float("nan")
     feasible: bool = True
     reasons: list = field(default_factory=list)
@@ -111,14 +113,14 @@ def hohmann(r1, r2, di, split=None):
         split = 0.0 if r2 >= r1 else 1.0
     if abs(r2 - r1) < 1e-6:            # degenerate: pure plane change at a node
         dv = 2.0 * vcirc(r1) * math.sin(di / 2.0)
-        return dv, 0.0, 1, [(0.0, vcirc(r1), di)]
+        return dv, 0.0, 1, [(0.0, vcirc(r1), di, r1, dv)]
     a = 0.5 * (r1 + r2)
     v1, v2 = vcirc(r1), vcirc(r2)
     vt1, vt2 = vvis(r1, a), vvis(r2, a)
     dv1 = combined_burn(v1, vt1, split * di)
     dv2 = combined_burn(vt2, v2, (1.0 - split) * di)
     tof = math.pi * math.sqrt(a ** 3 / MU)
-    plan = [(0.0, vt1, split * di), (tof, v2, (1.0 - split) * di)]
+    plan = [(0.0, vt1, split * di, r1, dv1), (tof, v2, (1.0 - split) * di, r2, dv2)]
     return dv1 + dv2, tof, 2, plan
 
 
@@ -140,7 +142,7 @@ def bielliptic(r1, r2, rb, di):
     dv3 = abs(vvis(r2, a2) - vcirc(r2))
     t1 = math.pi * math.sqrt(a1 ** 3 / MU)
     t2 = math.pi * math.sqrt(a2 ** 3 / MU)
-    plan = [(0.0, vvis(r1, a1), 0.0), (t1, vvis(rb, a2), di), (t1 + t2, vcirc(r2), 0.0)]
+    plan = [(0.0, vvis(r1, a1), 0.0, r1, dv1), (t1, vvis(rb, a2), di, rb, dv2), (t1 + t2, vcirc(r2), 0.0, r2, dv3)]
     return dv1 + dv2 + dv3, t1 + t2, 3, plan
 
 
@@ -192,12 +194,12 @@ def one_tangent(r1, r2, k, di):
         tof = t_from_peri
         dv1 = abs(vt1 - v1)
         dv2 = math.sqrt(max(vt2 ** 2 + v2 ** 2 - 2 * vt2 * v2 * math.cos(phi) * math.cos(di), 0))
-        plan = [(0.0, vt1, 0.0), (tof, v2, di)]
+        plan = [(0.0, vt1, 0.0, r1, dv1), (tof, v2, di, r2, dv2)]
     else:
         tof = math.pi * math.sqrt(a ** 3 / MU) - t_from_peri
         dv1 = combined_burn(v1, vt1, di)
         dv2 = math.sqrt(max(vt2 ** 2 + v2 ** 2 - 2 * vt2 * v2 * math.cos(phi), 0))
-        plan = [(0.0, vt1, di), (tof, v2, 0.0)]
+        plan = [(0.0, vt1, di, r1, dv1), (tof, v2, 0.0, r2, dv2)]
     return dv1 + dv2, tof, 2, plan, {"e": e, "nu_deg": math.degrees(nu), "fpa_deg": math.degrees(phi)}
 
 
@@ -217,6 +219,20 @@ def low_thrust(r1, r2, di, accel_ms2):
     dv = math.sqrt(max(v1 ** 2 + v2 ** 2 - 2 * v1 * v2 * math.cos(math.pi / 2 * di), 0))
     tof = dv / (accel_ms2 * 1e-3)
     return dv, tof
+
+
+def gravity_loss(plan, isp, tw):
+    """Finite-burn gravity loss, Robbins (1966): dv * (w tau)^2 / 24 per burn, with
+    w the circular rate at the burn radius and tau the burn time at constant thrust
+    T = tw * m0 * g0. Matches a fixed-attitude burn within ~5 % for tw >= 0.2 and
+    overestimates a velocity-tracking burn about 2x (validate.py, section 4)."""
+    ve, m, loss = isp * G0, 1.0, 0.0
+    for b in plan:
+        r, dv = b[3], b[4]
+        tau = isp / tw * m * (1.0 - math.exp(-dv / ve))
+        loss += dv * (math.sqrt(MU / r ** 3) * tau) ** 2 / 24.0
+        m *= math.exp(-dv / ve)
+    return loss
 
 
 # ---------------------------------------------------------------- evaluation
@@ -268,6 +284,8 @@ def evaluate(m: Mission):
 
     for o in opts:
         o.prop_frac = 1.0 - math.exp(-o.dv / (o.isp * G0))
+        if o.burn_plan:
+            o.dv_loss = gravity_loss(o.burn_plan, o.isp, m.tw_chem)
     apply_rules(m, opts)
     score(m, opts)
     return opts
@@ -281,10 +299,11 @@ def apply_rules(m: Mission, opts):
         o.feasible, o.reasons = o.applicable, ([] if o.applicable else [o.note])
         if not o.applicable:
             continue
-        need = o.dv * (1 + m.margin_pct / 100)
+        need = (o.dv + o.dv_loss) * (1 + m.margin_pct / 100)
         if need > m.dv_budget:
             o.feasible = False
-            o.reasons.append(f"Δv {o.dv:.3f} + {m.margin_pct:g}% margin = {need:.3f} > budget {m.dv_budget:.3f} km/s")
+            o.reasons.append(f"Δv {o.dv:.3f} + loss {o.dv_loss:.3f} + {m.margin_pct:g}% margin = {need:.3f} "
+                             f"> budget {m.dv_budget:.3f} km/s")
         if o.tof > tof_max * (1 + 1e-6):
             o.feasible = False
             o.reasons.append(f"TOF {o.tof/3600:.1f} h > limit {m.tof_max_h:.1f} h")
@@ -375,7 +394,7 @@ def simulate(r1, plan, coast_after=0.0, n_out=2000):
     y = np.array([r1, 0, 0, 0, vcirc(r1), 0.0])
     t0, ts, ys, dv_used = 0.0, [], [], 0.0
     times = [b[0] for b in plan] + [plan[-1][0] + coast_after]
-    for i, (tb, vafter, dinc) in enumerate(plan):
+    for i, (tb, vafter, dinc, *_) in enumerate(plan):
         if tb > t0:
             sol = solve_ivp(_twobody, (t0, tb), y, rtol=1e-11, atol=1e-11, dense_output=True)
             tt = np.linspace(t0, tb, max(int(n_out * (tb - t0) / times[-1]), 50))
@@ -412,15 +431,15 @@ def orbit_elements(y):
 # ------------------------------------------------------------------- report
 def print_table(m: Mission, opts):
     print(f"\nMission: alt {m.alt1:.0f} -> {m.alt2:.0f} km, Δi = {m.di_deg:.2f}°, "
-          f"budget {m.dv_budget} km/s (margin {m.margin_pct:g}%), TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
-    hdr = f"{'Option':34s}{'Δv km/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{'WS':>7s}{'TOPSIS':>8s}  status"
+          f"budget {m.dv_budget} km/s (margin {m.margin_pct:g}%, T/W {m.tw_chem:g}), TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
+    hdr = f"{'Option':34s}{'Δv km/s':>9s}{'loss m/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{'WS':>7s}{'TOPSIS':>8s}  status"
     print(hdr); print("-" * len(hdr))
     for o in opts:
         tof = f"{o.tof/3600:.2f} h" if o.tof < 72 * 3600 else f"{o.tof/86400:.1f} d"
         st = "OK" if o.feasible else "X " + "; ".join(o.reasons)
         ws = f"{o.score_ws:.3f}" if o.feasible else "-"
         tp = f"{o.score_topsis:.3f}" if o.feasible else "-"
-        print(f"{o.name:34s}{o.dv:9.4f}{tof:>12s}{o.burns:6d}{o.prop_frac:8.3f}{o.complexity:6.1f}{ws:>7s}{tp:>8s}  {st}")
+        print(f"{o.name:34s}{o.dv:9.4f}{1e3 * o.dv_loss:9.1f}{tof:>12s}{o.burns:6d}{o.prop_frac:8.3f}{o.complexity:6.1f}{ws:>7s}{tp:>8s}  {st}")
     best = recommend(opts)
     print("Recommended:", best.name if best else "NONE FEASIBLE - relax constraints")
     for a in rule_advice(m):

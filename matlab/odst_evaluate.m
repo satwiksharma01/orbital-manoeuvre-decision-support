@@ -78,6 +78,9 @@ c{end+1} = newOpt('low_thrust', 'Low-thrust spiral (Edelbaum)', dv, tof, 0, m.is
 opts = [c{:}];
 for i = 1:numel(opts)                                   % Tsiolkovsky
     opts(i).prop_frac = 1 - exp(-opts(i).dv/(opts(i).isp*C.G0));
+    if ~isempty(opts(i).plan)
+        opts(i).dv_loss = odst_gravity_loss(opts(i).plan, opts(i).isp, m.tw_chem);
+    end
 end
 opts = applyRules(m, opts);
 opts = scoreOptions(m, opts);
@@ -95,7 +98,7 @@ end
 function o = newOpt(key, name, dv, tof, burns, isp, cplx, plan, params)
 o = struct('key', key, 'name', name, 'dv', dv, 'tof', tof, 'burns', burns, ...
            'isp', isp, 'complexity', cplx, 'applicable', true, 'note', '', ...
-           'plan', plan, 'params', params, 'prop_frac', NaN, 'feasible', true, ...
+           'plan', plan, 'params', params, 'dv_loss', 0, 'prop_frac', NaN, 'feasible', true, ...
            'reasons', '', 'score_ws', NaN, 'score_topsis', NaN);
 end
 
@@ -109,11 +112,11 @@ for i = 1:numel(opts)
     if ~o.applicable
         r{end+1} = o.note; %#ok<AGROW>
     else
-        need = o.dv*(1 + m.margin_pct/100);
+        need = (o.dv + o.dv_loss)*(1 + m.margin_pct/100);
         if need > m.dv_budget
             o.feasible = false;
-            r{end+1} = sprintf('dv %.3f + %g%% margin = %.3f > budget %.3f km/s', ...
-                               o.dv, m.margin_pct, need, m.dv_budget); %#ok<AGROW>
+            r{end+1} = sprintf('dv %.3f + loss %.3f + %g%% margin = %.3f > budget %.3f km/s', ...
+                               o.dv, o.dv_loss, m.margin_pct, need, m.dv_budget); %#ok<AGROW>
         end
         if o.tof > tofmax*(1 + 1e-6)
             o.feasible = false;

@@ -21,7 +21,7 @@ def run(o, r1, r2, tau):
     def f(t, y):
         r, v = y[:3], y[3:]
         a = -MU * r / np.linalg.norm(r) ** 3
-        for k, (tb, va, dinc) in enumerate(plan):
+        for k, (tb, va, dinc, *_) in enumerate(plan):
             if tb - tau / 2 <= t < tb + tau / 2:
                 if acc[k] is None:
                     rc, vc = coast(r, v, tb - t)   # state at the burn centre (no thrust)

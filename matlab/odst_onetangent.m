@@ -30,12 +30,12 @@ if raising
     tof = tPeri;
     dv1 = abs(vt1 - v1);
     dv2 = sqrt(max(vt2^2 + v2^2 - 2*vt2*v2*cos(phi)*cos(di), 0));
-    plan = [0, vt1, 0; tof, v2, di];
+    plan = [0, vt1, 0, r1, dv1; tof, v2, di, r2, dv2];
 else
     tof = pi*sqrt(a^3/mu) - tPeri;
     dv1 = odst_combined(v1, vt1, di);
     dv2 = sqrt(max(vt2^2 + v2^2 - 2*vt2*v2*cos(phi), 0));
-    plan = [0, vt1, di; tof, v2, 0];
+    plan = [0, vt1, di, r1, dv1; tof, v2, 0, r2, dv2];
 end
 dv = dv1 + dv2;
 nburns = 2;

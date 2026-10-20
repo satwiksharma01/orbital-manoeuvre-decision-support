@@ -32,5 +32,10 @@ for (const [budget, margin, want] of [[6, 0, true], [6, 5, false], [6.5, 5, true
   const ok = lt.feasible === want; fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] budget ${budget} km/s, margin ${margin}%: low thrust feasible = ${lt.feasible}`);
 }
+for (const [tw, ref] of [[0.5, 14.95], [0.1, 373.81]]) {   // python/odst.py, Hohmann LEO -> GEO
+  const loss = 1e3 * O.evaluate({ ...base, tw_chem: tw }).opts.find((o) => o.key === "hohmann").dv_loss;
+  const ok = Math.abs(loss - ref) < 0.1; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Hohmann gravity loss at T/W ${tw}: ${loss.toFixed(2)} m/s (ref ${ref})`);
+}
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);
