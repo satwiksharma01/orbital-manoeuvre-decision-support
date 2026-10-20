@@ -32,6 +32,7 @@ Given an initial and a target circular orbit, an inclination change, a Δv budge
 - Every burn plan propagated with `ode45`: final orbit within 0.5 km, e < 10⁻⁹, Δv matches the model to 10⁻⁵ km/s.
 - **Simulink** finite-burn model: the error grows as τ², about 56 km at τ = 60 s for LEO→GEO, so the impulsive model holds for short chemical burns.
 - An independent Python implementation and a Node test of the web engine agree with MATLAB to every printed digit.
+- **NASA GMAT R2026a**: GMAT's differential corrector, flying the same LEO 400 km → GEO transfers, matches the tool to under 1 mm/s and 0.01 s (4.22154 km/s and 5.2913 h with Δi = 28.5°; 3.85396 km/s coplanar). Adding J2 in GMAT costs 2.4 m/s more and 1.1 s. Script in `gmat/`, runner `python/gmat_crosscheck.py` (needs a local GMAT, so not in CI).
 
 | MATLAB GUI | Simulink model |
 |---|---|
@@ -49,14 +50,14 @@ This is an early trade-study and teaching tool: it tells you which family of tra
 | Assumption | What it leaves out |
 |---|---|
 | Start and target orbits are circular | Elliptical targets such as GTO or Molniya |
-| Two-body gravity | J2 (RAAN drifts by degrees a day in LEO) and drag below about 500 km |
+| Two-body gravity | J2 (2.4 m/s on LEO → GEO in GMAT, but RAAN drifts by degrees a day in LEO, which matters for long spirals) and drag below about 500 km |
 | Burns are impulsive, with a gravity-loss estimate | The loss uses Robbins' approximation from the thrust-to-weight input (default 0.5). It matches a fixed-attitude finite burn within 5 % for T/W ≥ 0.2, overestimates a velocity-tracking burn about 2×, and underestimates below T/W ≈ 0.1 |
 | Burn timing is ignored | Phasing, rendezvous and launch windows |
 | Low thrust is Edelbaum at constant acceleration | Power limits, eclipses and acceleration rising as propellant is used |
 | A fixed Δv margin (default 5 %) | Uncertainty in Isp, thrust and pointing |
 | Weights are chosen by the user | Only the time weight is swept; other weights can flip the ranking |
 
-Every check so far compares the tool with textbooks and with itself, not yet with an industry tool such as GMAT.
+Within these assumptions the results match NASA GMAT (see Verification).
 
 ## Run it
 
@@ -75,6 +76,7 @@ odst_app     % interactive planner
 ```bash
 python python/validate.py        # cross-check
 node web/test_engine.js          # web engine regression test
+python python/gmat_crosscheck.py # cross-check against a local NASA GMAT install
 ```
 
 ## Repository layout
@@ -84,4 +86,5 @@ node web/test_engine.js          # web engine regression test
 | `matlab/` | Models, optimisers, decision pipeline (`odst_evaluate.m`), GUI, Simulink model and builder, tests |
 | `python/` | Reference implementation, validation and figure scripts |
 | `web/` | Self-contained web planner and its engine test |
+| `gmat/` | GMAT script for the cross-check, filled in and run by `python/gmat_crosscheck.py` |
 | `assets/` | Screenshots and result figures used in this README |

@@ -1,0 +1,70 @@
+%  Hohmann transfer with the plane change at apoapsis, solved by GMAT's own
+%  differential corrector. Filled in and run by python/gmat_crosscheck.py;
+%  placeholders such as $$r1 are replaced before GMAT sees the file.
+%
+%  The start orbit sits at INC = $inc1 deg and the target at $inc2 deg, so the
+%  plane rotates by their difference about the node line. Targeting INC = 0
+%  directly is avoided: inclination is not smooth at zero.
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '01 Jan 2026 12:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = $r1;
+Sat.ECC = 0;
+Sat.INC = $inc1;
+Sat.RAAN = 0;
+Sat.AOP = 0;
+Sat.TA = 0;
+
+Create ForceModel FM;
+FM.CentralBody = Earth;
+$gravity
+
+Create Propagator Prop;
+Prop.FM = FM;
+Prop.Type = RungeKutta89;
+Prop.InitialStepSize = 60;
+Prop.Accuracy = 1e-13;
+Prop.MinStep = 0;
+Prop.MaxStep = 600;
+
+Create ImpulsiveBurn TOI;
+TOI.CoordinateSystem = Local;
+TOI.Origin = Earth;
+TOI.Axes = VNB;
+
+Create ImpulsiveBurn GOI;
+GOI.CoordinateSystem = Local;
+GOI.Origin = Earth;
+GOI.Axes = VNB;
+
+Create DifferentialCorrector DC;
+DC.MaximumIterations = 50;
+
+Create ReportFile Rpt;
+Rpt.Filename = '$report';
+Rpt.WriteHeaders = false;
+Rpt.Precision = 16;
+
+BeginMissionSequence;
+
+%  1. Departure burn along the velocity: raise apoapsis to the target radius.
+Target DC {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC(TOI.Element1 = $dv1, {Perturbation = 1e-6, MaxStep = 0.2});
+   Maneuver TOI(Sat);
+   Propagate Prop(Sat) {Sat.Earth.Apoapsis};
+   Achieve DC(Sat.Earth.RMAG = $r2, {Tolerance = 1e-7});
+EndTarget;
+
+%  2. Apoapsis burn: circularise (SMA = r with no radial component) and rotate the plane.
+Target DC {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC(GOI.Element1 = $dv2v, {Perturbation = 1e-6, MaxStep = 0.2});
+   Vary DC(GOI.Element2 = $dv2n, {Perturbation = 1e-6, MaxStep = 0.2});
+   Maneuver GOI(Sat);
+   Achieve DC(Sat.Earth.SMA = $r2, {Tolerance = 1e-7});
+   Achieve DC(Sat.EarthMJ2000Eq.INC = $inc2, {Tolerance = 1e-9});
+EndTarget;
+
+Report Rpt TOI.Element1 TOI.Element2 TOI.Element3 GOI.Element1 GOI.Element2 GOI.Element3 Sat.ElapsedSecs Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;
