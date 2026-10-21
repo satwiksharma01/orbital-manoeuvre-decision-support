@@ -37,6 +37,8 @@
   --s-bielliptic: #1baf7a;
   --s-one_tangent: #eda100;
   --s-low_thrust: #e87ba4;
+  --s-apse: #1f9fb4;
+  --s-lambert: #8a63d2;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --r-lg: 20px;
@@ -52,7 +54,7 @@
     --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
     --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
     --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
-    --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181;
+    --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3;
     color-scheme: dark;
   }
 }
@@ -65,7 +67,7 @@
   --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
   --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
   --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
-  --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181;
+  --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3;
   color-scheme: dark;
 }
 
@@ -123,6 +125,10 @@ h1 { margin: 0; font: 700 clamp(32px, 4.4vw, 48px)/1.06 var(--font-display); let
 .field input:focus { outline: none; }
 .row:focus-within { background: var(--accent-soft); }
 .unit { font-size: 13px; color: var(--label-3); min-width: 2.6em; }
+.row[hidden] { display: none; }
+.row.shape { cursor: default; }
+.row.shape:focus-within { background: none; }
+.row.shape .seg { width: 184px; flex: none; }
 .row.invalid { background: var(--bad-soft); }
 .row.invalid .field input { color: var(--bad); }
 .hint { margin: 0; padding-inline: 16px; font-size: 12.5px; color: var(--bad); }
@@ -279,7 +285,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   <section class="hero">
     <p class="kicker">ASE3004 Space Flight Mechanics · Project 38 · Satwik Sharma</p>
     <h1>Which manoeuvre should this mission fly?</h1>
-    <p class="lede">Describe the transfer and what matters most. The tool sizes five candidate manoeuvres, optimises each one, removes those that break your constraints and ranks the rest.</p>
+    <p class="lede">Describe the transfer and what matters most. The tool sizes the candidate manoeuvres, optimises each one, removes those that break your constraints and ranks the rest.</p>
   </section>
 
   <div class="layout">
@@ -287,8 +293,25 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       <section class="group" aria-labelledby="g-orbits">
         <h2 class="group-title" id="g-orbits">Orbits</h2>
         <div class="list">
-          <label class="row" for="alt1"><span>Initial altitude</span><span class="field"><input id="alt1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
-          <label class="row" for="alt2"><span>Target altitude</span><span class="field"><input id="alt2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <div class="row shape"><span id="g-shape1">Initial orbit</span>
+            <div class="seg" role="radiogroup" aria-labelledby="g-shape1" data-seg="shape1">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="shape1" id="sh1-c" value="circular"><label for="sh1-c">Circular</label>
+              <input type="radio" name="shape1" id="sh1-e" value="elliptical"><label for="sh1-e">Elliptical</label>
+            </div>
+          </div>
+          <label class="row" for="alt1"><span id="alt1-l">Initial altitude</span><span class="field"><input id="alt1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="apo1" hidden><span>Initial apoapsis</span><span class="field"><input id="apo1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <div class="row shape"><span id="g-shape2">Target orbit</span>
+            <div class="seg" role="radiogroup" aria-labelledby="g-shape2" data-seg="shape2">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="shape2" id="sh2-c" value="circular"><label for="sh2-c">Circular</label>
+              <input type="radio" name="shape2" id="sh2-e" value="elliptical"><label for="sh2-e">Elliptical</label>
+            </div>
+          </div>
+          <label class="row" for="alt2"><span id="alt2-l">Target altitude</span><span class="field"><input id="alt2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="apo2" hidden><span>Target apoapsis</span><span class="field"><input id="apo2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="dw_deg" hidden><span>Target apse angle Δω</span><span class="field"><input id="dw_deg" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
           <label class="row" for="di_deg"><span>Inclination change</span><span class="field"><input id="di_deg" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
         </div>
       </section>
@@ -300,7 +323,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
           <label class="row" for="margin_pct"><span>Δv margin</span><span class="field"><input id="margin_pct" type="number" inputmode="decimal" min="0" max="100" step="any"><span class="unit">%</span></span></label>
           <label class="row" for="tof_max_h"><span>Maximum transfer time</span><span class="field"><input id="tof_max_h" type="number" inputmode="decimal" min="0" step="any"><span class="unit">h</span></span></label>
         </div>
-        <p class="hint" id="hint" hidden>Enter a number in every highlighted field.</p>
+        <p class="hint" id="hint" hidden>Enter a number in every highlighted field. An apoapsis can't be below its periapsis.</p>
       </section>
 
       <section class="group" aria-labelledby="g-prop">
@@ -389,7 +412,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 (function (root) {
   "use strict";
   const MU = 398600.4418, RE = 6378.137, G0 = 9.80665e-3;
-  const CPLX = { hohmann: 1.0, hohmann_split: 2.0, one_tangent: 2.5, bielliptic: 3.0, low_thrust: 4.0 };
+  const CPLX = { hohmann: 1.0, hohmann_split: 2.0, one_tangent: 2.5, bielliptic: 3.0, low_thrust: 4.0, apse: 1.5, lambert: 2.5 };
   const PRESETS = {
     "Balanced": [0.30, 0.20, 0.30, 0.20],
     "Propellant-critical": [0.25, 0.55, 0.05, 0.15],
@@ -498,16 +521,233 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     return { dv, tof: dv / (accel * 1e-3), burns: 0, revs };
   }
 
+  // ------------------------------------------------- elliptical orbits and Lambert
+  // Same geometry and algorithms as python/odst.py: the start orbit lies in x-y with its
+  // periapsis on +x; the target plane is turned by di about +x, its periapsis dw from +x.
+  const ELL_TOL = 1e-6, DV_ZERO = 1e-9;
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = (a) => Math.sqrt(dot(a, a));
+  const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const mul3 = (s, a) => [s * a[0], s * a[1], s * a[2]];
+
+  function orbitState(rp, ra, di, dw, th) {
+    const x = [1, 0, 0], y = [0, Math.cos(di), Math.sin(di)];
+    const P = add3(mul3(Math.cos(dw), x), mul3(Math.sin(dw), y)), Q = add3(mul3(-Math.sin(dw), x), mul3(Math.cos(dw), y));
+    const e = (ra - rp) / (ra + rp), p = 2 * rp * ra / (rp + ra);
+    const rr = Math.abs(Math.cos(th) - 1) < 1e-12 ? rp : Math.abs(Math.cos(th) + 1) < 1e-12 ? ra : p / (1 + e * Math.cos(th));
+    return { r: mul3(rr, add3(mul3(Math.cos(th), P), mul3(Math.sin(th), Q))),
+             v: mul3(Math.sqrt(MU / p), add3(mul3(-Math.sin(th), P), mul3(e + Math.cos(th), Q))), P, Q, rr };
+  }
+  function stumpff(z) {
+    if (z > 1e-8) { const s = Math.sqrt(z); return [(1 - Math.cos(s)) / z, (s - Math.sin(s)) / s ** 3]; }
+    if (z < -1e-8) { const s = Math.sqrt(-z); return [(Math.cosh(s) - 1) / -z, (Math.sinh(s) - s) / s ** 3]; }
+    return [0.5 - z / 24, 1 / 6 - z / 120];
+  }
+  // Single-revolution prograde Lambert problem (angular momentum along +z), universal
+  // variables (Curtis Algorithm 5.2) with bisection on z. Returns [v1, v2] or null.
+  function lambert(r1v, r2v, dt) {
+    const r1 = norm(r1v), r2 = norm(r2v);
+    let th = Math.acos(Math.max(-1, Math.min(1, dot(r1v, r2v) / (r1 * r2))));
+    if (cross(r1v, r2v)[2] < 0) th = 2 * Math.PI - th;
+    if (1 - Math.cos(th) < 1e-14) return null;
+    const A = Math.sin(th) * Math.sqrt(r1 * r2 / (1 - Math.cos(th)));
+    if (Math.abs(A) < 1e-12) return null;
+    const yOf = (z) => { const [C, S] = stumpff(z); return [r1 + r2 + A * (z * S - 1) / Math.sqrt(C), C, S]; };
+    const tofOf = (z) => {
+      const [y, C, S] = yOf(z);
+      if (y < 0) return -Infinity;
+      const x = Math.sqrt(y / C);
+      return (x ** 3 * S + A * Math.sqrt(y)) / Math.sqrt(MU);
+    };
+    let lo = -4 * Math.PI, hi = 4 * Math.PI ** 2 - 1e-4;          // C(z) -> 0 at 4 pi^2
+    while (tofOf(lo) > dt) { lo *= 2; if (lo < -1e5) return null; }
+    if (tofOf(hi) < dt) return null;
+    for (let i = 0; i < 200; i++) {
+      const z = 0.5 * (lo + hi);
+      if (tofOf(z) < dt) lo = z; else hi = z;
+      if (hi - lo < 1e-13 * Math.max(1, Math.abs(z))) break;
+    }
+    const y = yOf(0.5 * (lo + hi))[0], f = 1 - y / r1, g = A * Math.sqrt(y / MU), gdot = 1 - y / r2;
+    return [sub3(r2v, mul3(f, r1v)).map((c) => c / g), sub3(mul3(gdot, r2v), r1v).map((c) => c / g)];
+  }
+  // Two impulses from an apsis of the start orbit to the opposite direction on the target,
+  // with the plane change split optimally. Burns below DV_ZERO are dropped (GTO -> GEO: one burn).
+  function apseTransfer(rp1, ra1, rp2, ra2, di, dw) {
+    const circ1 = ra1 - rp1 < ELL_TOL, circ2 = ra2 - rp2 < ELL_TOL, onNode = (a) => Math.abs(Math.sin(a)) < 1e-9;
+    if (!(circ1 || circ2 || onNode(dw))) return { why: "apse lines not aligned (Δω must be 0° or 180°)" };
+    const dirs = circ1 && !circ2 ? [dw, dw + Math.PI] : [0, Math.PI];
+    if (di > 0 && !dirs.every(onNode)) return { why: "a plane change needs both burns on the node line (Δω must be 0° or 180°)" };
+    const a1 = (rp1 + ra1) / 2, a2 = (rp2 + ra2) / 2;
+    let best = null;
+    for (const phi of dirs) {
+      const th2 = phi + Math.PI - dw;
+      const rA = orbitState(rp1, ra1, 0, 0, phi).rr, rB = orbitState(rp2, ra2, di, dw, th2).rr, at = (rA + rB) / 2;
+      const v1 = vv(rA, a1), vtA = vv(rA, at), vtB = vv(rB, at), v2 = vv(rB, a2);
+      const cost = (s) => comb(v1, vtA, s * di) + comb(vtB, v2, (1 - s) * di);
+      const cands = [0, 1];
+      if (di > 0) cands.push(golden(cost, 0, 1, 1e-10));
+      const s = cands.reduce((b, c) => (cost(c) < cost(b) ? c : b));
+      if (!best || cost(s) < best.c - 1e-12) best = { c: cost(s), phi, th2, rA, rB, at, v1, vtA, vtB, v2, s };
+    }
+    const { phi, th2, rA, rB, at, vtA, vtB, s } = best;
+    const dv1 = comb(best.v1, vtA, s * di), dv2 = comb(vtB, best.v2, (1 - s) * di);
+    const c = Math.cos(s * di), sn = Math.sin(s * di), Rt = (u) => [u[0], c * u[1] - sn * u[2], sn * u[1] + c * u[2]];
+    const along = (ang) => Rt([-Math.sin(ang), Math.cos(ang), 0]);
+    const st1 = orbitState(rp1, ra1, 0, 0, phi);
+    const rBv = Rt([rB * Math.cos(phi + Math.PI), rB * Math.sin(phi + Math.PI), 0]), vB = mul3(vtB, along(phi + Math.PI));
+    const dv1v = sub3(mul3(vtA, along(phi)), st1.v), dv2v = sub3(orbitState(rp2, ra2, di, dw, th2).v, vB);
+    const k1 = dv1 > DV_ZERO, k2 = dv2 > DV_ZERO;
+    let tof = Math.PI * Math.sqrt(at ** 3 / MU), y0, plan, legs;
+    if (k1 && k2) { y0 = [...st1.r, ...st1.v]; plan = [[0, dv1v], [tof, dv2v]]; legs = [[rA, dv1], [rB, dv2]]; }
+    else if (k2) { y0 = [...rBv, ...vB]; plan = [[0, dv2v]]; legs = [[rB, dv2]]; tof = 0; }       // already on the transfer orbit
+    else { y0 = [...st1.r, ...st1.v]; plan = k1 ? [[0, dv1v]] : []; legs = k1 ? [[rA, dv1]] : []; tof = 0; }
+    return { dv: dv1 * k1 + dv2 * k2, tof, burns: plan.length, y0, plan, legs,
+             params: { split_at_dep: s, depart_deg: ((phi * 180 / Math.PI) % 360 + 360) % 360, rA, rB } };
+  }
+  // Plain Nelder-Mead (reflect 1, expand 2, contract 0.5, shrink 0.5), as _nelder_mead in odst.py.
+  function nelderMead(f, x0, steps, iters = 400, tol = 1e-12) {
+    const n = x0.length;
+    let pts = [x0.slice()].concat(x0.map((_, i) => x0.map((x, j) => x + (j === i ? steps[j] : 0))));
+    let vals = pts.map(f);
+    for (let it = 0; it < iters; it++) {
+      const order = vals.map((_, i) => i).sort((a, b) => vals[a] - vals[b]);
+      pts = order.map((i) => pts[i]); vals = order.map((i) => vals[i]);
+      if (Math.abs(vals[n] - vals[0]) < tol) break;
+      const c = x0.map((_, j) => { let s = 0; for (let i = 0; i < n; i++) s += pts[i][j]; return s / n; });
+      const xr = c.map((cj, j) => cj + (cj - pts[n][j])), fr = f(xr);
+      if (fr < vals[0]) {
+        const xe = c.map((cj, j) => cj + 2 * (cj - pts[n][j])), fe = f(xe);
+        if (fe < fr) { pts[n] = xe; vals[n] = fe; } else { pts[n] = xr; vals[n] = fr; }
+      } else if (fr < vals[n - 1]) { pts[n] = xr; vals[n] = fr; }
+      else {
+        const xc = c.map((cj, j) => cj + 0.5 * (pts[n][j] - cj)), fc = f(xc);
+        if (fc < vals[n]) { pts[n] = xc; vals[n] = fc; }
+        else for (let i = 1; i <= n; i++) { pts[i] = pts[i].map((x, j) => pts[0][j] + 0.5 * (x - pts[0][j])); vals[i] = f(pts[i]); }
+      }
+    }
+    let ib = 0;
+    for (let i = 1; i <= n; i++) if (vals[i] < vals[ib]) ib = i;
+    return [pts[ib], vals[ib]];
+  }
+  // Minimum-dv two-impulse Lambert transfer over departure and arrival true anomaly and time
+  // (60 s to min(tofmax, the longer period)): nGrid x nGrid grid with a golden section on time
+  // per cell, then Nelder-Mead from the best cell. Transfers within 0.5 deg of 0 or 180 deg skipped.
+  function lambertOptimal(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid = 16) {
+    const tmin = 60, per = (rp, ra) => 2 * Math.PI * Math.sqrt(((rp + ra) / 2) ** 3 / MU);
+    const tmax = Math.min(tofmax, Math.max(per(rp1, ra1), per(rp2, ra2)));
+    if (tmax <= tmin) return null;
+    const gap = Math.sin(0.5 * Math.PI / 180);
+    const solve = ([th1, th2, u]) => {
+      if (!(u >= 0 && u <= 1)) return [Infinity, null];
+      const s1 = orbitState(rp1, ra1, 0, 0, th1), s2 = orbitState(rp2, ra2, di, dw, th2);
+      if (norm(cross(s1.r, s2.r)) < gap * norm(s1.r) * norm(s2.r)) return [Infinity, null];
+      const sol = lambert(s1.r, s2.r, tmin + u * (tmax - tmin));
+      if (!sol) return [Infinity, null];
+      const dv1v = sub3(sol[0], s1.v), dv2v = sub3(s2.v, sol[1]);
+      return [norm(dv1v) + norm(dv2v), { s1, s2, dv1v, dv2v }];
+    };
+    const cost = (x) => solve(x)[0], g = (Math.sqrt(5) - 1) / 2;
+    let fBest = Infinity, xBest = null;
+    for (let i = 0; i < nGrid; i++) for (let j = 0; j < nGrid; j++) {
+      const th1 = 2 * Math.PI * i / nGrid, th2 = 2 * Math.PI * j / nGrid;
+      let a = 0, b = 1, c = b - g * (b - a), d = a + g * (b - a), fc = cost([th1, th2, c]), fd = cost([th1, th2, d]);
+      for (let k = 0; k < 25; k++) {
+        if (fc < fd) { b = d; d = c; fd = fc; c = b - g * (b - a); fc = cost([th1, th2, c]); }
+        else { a = c; c = d; fc = fd; d = a + g * (b - a); fd = cost([th1, th2, d]); }
+      }
+      const u = (a + b) / 2, fu = cost([th1, th2, u]);
+      if (fu < fBest) { fBest = fu; xBest = [th1, th2, u]; }
+    }
+    if (!isFinite(fBest)) return null;
+    const step = 2 * Math.PI / nGrid;
+    const [x, fx] = nelderMead(cost, xBest, [step / 2, step / 2, 0.05]);
+    const { s1, s2, dv1v, dv2v } = solve(x)[1], T = tmin + x[2] * (tmax - tmin), deg = (r) => ((r * 180 / Math.PI) % 360 + 360) % 360;
+    return { dv: fx, tof: T, burns: 2, y0: [...s1.r, ...s1.v], plan: [[0, dv1v], [T, dv2v]],
+             legs: [[norm(s1.r), norm(dv1v)], [norm(s2.r), norm(dv2v)]],
+             params: { th1_deg: deg(x[0]), th2_deg: deg(x[1]), time_limited: x[2] > 1 - 1e-6 } };
+  }
+  // Fly a vector burn plan [[t, dv], ...] from state y0 (two-body, RK4 with n steps per coast).
+  // Returns the positions along the way, the index of each burn, the final state and the dv used.
+  function simulateVec(y0, plan, coastAfter = 0, n = 240) {
+    const fdot = (y) => { const r = norm(y.slice(0, 3)), k = -MU / r ** 3; return [y[3], y[4], y[5], k * y[0], k * y[1], k * y[2]]; };
+    const ax = (y, h, d) => y.map((v, i) => v + h * d[i]);
+    let y = y0.slice(), t0 = 0, dvUsed = 0;
+    const pts = [y.slice(0, 3)], burnIdx = [];
+    const tEnd = (plan.length ? plan[plan.length - 1][0] : 0) + coastAfter;
+    for (const [tb, dv] of plan.concat([[tEnd, null]])) {
+      if (tb > t0) {
+        const h = (tb - t0) / n;
+        for (let i = 0; i < n; i++) {
+          const k1 = fdot(y), k2 = fdot(ax(y, h / 2, k1)), k3 = fdot(ax(y, h / 2, k2)), k4 = fdot(ax(y, h, k3));
+          y = y.map((v, j) => v + h / 6 * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+          pts.push(y.slice(0, 3));
+        }
+      }
+      if (dv) { burnIdx.push(pts.length - 1); y = [...y.slice(0, 3), ...add3(y.slice(3), dv)]; dvUsed += norm(dv); }
+      t0 = tb;
+    }
+    return { pts, burnIdx, yf: y, dvUsed };
+  }
+  // Relative |h| error and absolute eccentricity-vector error of state y against orbit (rp, ra, di, dw).
+  function targetMismatch(y, rp, ra, di, dw) {
+    const r = y.slice(0, 3), v = y.slice(3), h = cross(r, v), e = sub3(mul3(1 / MU, cross(v, h)), mul3(1 / norm(r), r));
+    const { P, Q } = orbitState(rp, ra, di, dw, 0), ht = mul3(Math.sqrt(MU * 2 * rp * ra / (rp + ra)), cross(P, Q));
+    return [norm(sub3(h, ht)) / norm(ht), norm(sub3(e, mul3((ra - rp) / (ra + rp), P)))];
+  }
+
   // ------------------------------------------------------------- evaluate
   function evaluate(m) {
     const r1 = RE + m.alt1, r2 = RE + m.alt2, di = m.di_deg * Math.PI / 180, tofmax = m.tof_max_h * 3600;
-    const same = Math.abs(r2 - r1) < 1e-6;
+    const ra1 = m.apo1 == null ? r1 : RE + m.apo1, ra2 = m.apo2 == null ? r2 : RE + m.apo2;   // null = circular
+    const ell = ra1 - r1 > ELL_TOL || ra2 - r2 > ELL_TOL;
+    if (ell && (ra1 < r1 || ra2 < r2)) throw new Error("apoapsis altitude below periapsis altitude");
     const opts = [];
     const add = (key, name, res, isp, extra) => {
       const o = Object.assign({ key, name, isp, complexity: CPLX[key], applicable: true, note: "", params: {} }, res, extra || {});
       opts.push(o); return o;
     };
+    if (ell) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax); else circularOptions(m, add, r1, r2, di, tofmax);
 
+    for (const o of opts) {
+      o.prop_frac = 1 - Math.exp(-o.dv / (o.isp * G0));
+      o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
+      o.reasons = []; o.feasible = o.applicable;
+      if (!o.applicable) { o.reasons.push(o.note); continue; }
+      const mg = m.margin_pct ?? 5, need = (o.dv + o.dv_loss) * (1 + mg / 100);
+      if (need > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} + loss ${o.dv_loss.toFixed(3)} + ${mg}% margin = ${need.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
+      if (o.tof > tofmax * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
+      if (o.key === "low_thrust" && m.propulsion === "chemical") { o.feasible = false; o.reasons.push("no electric propulsion on board"); }
+      if (o.key !== "low_thrust" && m.propulsion === "electric") { o.feasible = false; o.reasons.push("no high-thrust (chemical) propulsion on board"); }
+    }
+    score(m, opts);
+    const feas = opts.filter((o) => o.feasible);
+    const rec = feas.length ? feas.reduce((b, o) => (o.score_ws > b.score_ws ? o : b)) : null;
+    return { opts, rec, advice: ell ? ellipticalAdvice(m, opts[0].applicable) : advice(m, r1, r2, di), r1, r2, ra1, ra2, ell };
+  }
+
+  // Hohmann, bi-elliptic, one-tangent and Edelbaum assume circular orbits, so an elliptical
+  // mission is sized with the apse-to-apse and Lambert models only (as odst.py).
+  let ellMemo = { key: "" };   // the Lambert search takes ~70 ms; weight and budget changes reuse it
+  function ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax) {
+    const dw = m.dw_deg * Math.PI / 180, key = [r1, ra1, r2, ra2, di, dw, tofmax].join();
+    if (ellMemo.key !== key) ellMemo = { key, ap: apseTransfer(r1, ra1, r2, ra2, di, dw), lam: lambertOptimal(r1, ra1, r2, ra2, di, dw, tofmax) };
+    const { ap, lam } = ellMemo;
+    if (ap.why) add("apse", "Apse-to-apse (optimal Δi split)", { dv: NaN, tof: NaN, burns: 0 }, m.isp_chem, { applicable: false, note: ap.why });
+    else add("apse", "Apse-to-apse (optimal Δi split)", ap, m.isp_chem);
+    if (!lam) add("lambert", "Lambert (minimum Δv)", { dv: NaN, tof: NaN, burns: 2 }, m.isp_chem,
+                  { applicable: false, note: "no single-revolution Lambert transfer within the time limit" });
+    else add("lambert", "Lambert (minimum Δv)", lam, m.isp_chem, { note: lam.params.time_limited ? "time limit sets the transfer time" : "" });
+  }
+  function ellipticalAdvice(m, apseOk) {
+    return ["Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume circular orbits, so the apse-to-apse and Lambert transfers are sized instead.",
+            apseOk ? "Apse lines aligned: a transfer between apsides is available, usually the cheapest."
+                   : `Apse lines ${m.dw_deg}° apart: only a Lambert transfer is offered.`];
+  }
+
+  function circularOptions(m, add, r1, r2, di, tofmax) {
+    const same = Math.abs(r2 - r1) < 1e-6;
     add("hohmann", same ? "Simple plane change" : "Hohmann (combined plane change)", hohmann(r1, r2, di), m.isp_chem);
 
     const s = hohmannSplitOpt(r1, r2, di);
@@ -534,22 +774,6 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }
 
     add("low_thrust", "Low-thrust spiral (Edelbaum)", lowThrust(r1, r2, di, m.accel_ep), m.isp_ep);
-
-    for (const o of opts) {
-      o.prop_frac = 1 - Math.exp(-o.dv / (o.isp * G0));
-      o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
-      o.reasons = []; o.feasible = o.applicable;
-      if (!o.applicable) { o.reasons.push(o.note); continue; }
-      const mg = m.margin_pct ?? 5, need = (o.dv + o.dv_loss) * (1 + mg / 100);
-      if (need > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} + loss ${o.dv_loss.toFixed(3)} + ${mg}% margin = ${need.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
-      if (o.tof > tofmax * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
-      if (o.key === "low_thrust" && m.propulsion === "chemical") { o.feasible = false; o.reasons.push("no electric propulsion on board"); }
-      if (o.key !== "low_thrust" && m.propulsion === "electric") { o.feasible = false; o.reasons.push("no high-thrust (chemical) propulsion on board"); }
-    }
-    score(m, opts);
-    const feas = opts.filter((o) => o.feasible);
-    const rec = feas.length ? feas.reduce((b, o) => (o.score_ws > b.score_ws ? o : b)) : null;
-    return { opts, rec, advice: advice(m, r1, r2, di), r1, r2 };
   }
 
   function score(m, opts) {
@@ -584,7 +808,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     return out;
   }
 
-  const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate };
+  const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
+                orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -594,14 +819,15 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const O = window.ODST;
   const $ = (id) => document.getElementById(id);
   const NS = "http://www.w3.org/2000/svg";
-  const SHORT = { hohmann: "Hohmann", hohmann_split: "Hohmann split", bielliptic: "Bi-elliptic", one_tangent: "One-tangent", low_thrust: "Low-thrust" };
+  const SHORT = { hohmann: "Hohmann", hohmann_split: "Hohmann split", bielliptic: "Bi-elliptic", one_tangent: "One-tangent", low_thrust: "Low-thrust",
+                  apse: "Apse-to-apse", lambert: "Lambert" };
   const col = (k) => `var(--s-${k})`;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)");
   const ICON_CHECK = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const ICON_WARN = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 7v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="currentColor"/></svg>';
   const ICON_INFO = '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>';
 
-  const DEFAULT = { alt1: 400, alt2: 35786, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
+  const DEFAULT = { alt1: 400, alt2: 35786, apo1: null, apo2: null, dw_deg: 0, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
                     propulsion: "both", isp_chem: 320, tw_chem: 0.5, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced" };
   const EXAMPLES = [
     { label: "LEO → GEO", v: {} },
@@ -609,8 +835,10 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     { label: "36-min rapid response", v: { alt1: 400, alt2: 800, di_deg: 0, dv_budget: 1, tof_max_h: 0.6, preset: "Time-critical" } },
     { label: "All-electric GEO", v: { tof_max_h: 8760, preset: "Propellant-critical" } },
     { label: "60° plane change", v: { alt1: 500, alt2: 500, di_deg: 60, dv_budget: 10, tof_max_h: 4800, propulsion: "chemical", preset: "Propellant-critical" } },
+    { label: "GTO → GEO", v: { alt1: 250, apo1: 35786, alt2: 35786, propulsion: "chemical" } },
+    { label: "LEO → Molniya", v: { alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0, propulsion: "chemical" } },
   ];
-  const numIds = ["alt1", "alt2", "di_deg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep"];
+  const numIds = ["alt1", "apo1", "alt2", "apo2", "dw_deg", "di_deg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep"];
 
   // ---------------------------------------------------------------- springs
   // Apple-style parameters: response (s) and damping ratio. Re-targeting keeps the
@@ -689,9 +917,21 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   function setInputs(v) {
     const s = Object.assign({}, DEFAULT, v);
     numIds.forEach((id) => { $(id).value = s[id]; });
+    $("apo1").value = s.apo1 ?? s.alt1; $("apo2").value = s.apo2 ?? s.alt2;      // circular: apoapsis = periapsis
+    document.querySelector(`input[name="shape1"][value="${s.apo1 == null ? "circular" : "elliptical"}"]`).checked = true;
+    document.querySelector(`input[name="shape2"][value="${s.apo2 == null ? "circular" : "elliptical"}"]`).checked = true;
+    showShapes();
     document.querySelector(`input[name="propulsion"][value="${s.propulsion}"]`).checked = true;
     setPreset(s.preset);
     segs.forEach((g) => layoutSeg(g, true));
+  }
+  const elliptical = (k) => document.querySelector(`input[name="shape${k}"]:checked`).value === "elliptical";
+  function showShapes() {
+    const e1 = elliptical(1), e2 = elliptical(2);
+    $("apo1").closest(".row").hidden = !e1;
+    $("apo2").closest(".row").hidden = !e2; $("dw_deg").closest(".row").hidden = !e2;
+    $("alt1-l").textContent = e1 ? "Initial periapsis" : "Initial altitude";
+    $("alt2-l").textContent = e2 ? "Target periapsis" : "Target altitude";
   }
   function setPreset(name) {
     const r = document.querySelector(`input[name="preset"][value="${name}"]`);
@@ -711,13 +951,17 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const m = { k_one_tangent: 1.5, propulsion: document.querySelector('input[name="propulsion"]:checked').value,
                 weights: [0, 1, 2, 3].map((i) => +$("w" + i).value) };
     numIds.forEach((id) => { m[id] = parseFloat($(id).value); });
+    if (!elliptical(1)) m.apo1 = null;
+    if (!elliptical(2)) { m.apo2 = null; m.dw_deg = 0; }     // a circular target has no apse line
     return m;
   }
   function validate() {
     let ok = true, advBad = false;
     numIds.forEach((id) => {
-      const inp = $(id), v = parseFloat(inp.value);
-      const bad = !isFinite(v) || v < 0 || (inp.max !== "" && v > +inp.max) || (inp.dataset.pos !== undefined && v <= 0);
+      const inp = $(id), v = parseFloat(inp.value), row = inp.closest(".row");
+      if (row.hidden) { row.classList.remove("invalid"); inp.setAttribute("aria-invalid", "false"); return; }
+      const bad = !isFinite(v) || v < 0 || (inp.max !== "" && v > +inp.max) || (inp.dataset.pos !== undefined && v <= 0) ||
+                  (id === "apo1" && v < parseFloat($("alt1").value)) || (id === "apo2" && v < parseFloat($("alt2").value));
       inp.closest(".row").classList.toggle("invalid", bad);
       inp.setAttribute("aria-invalid", String(bad));
       if (bad) { ok = false; if (inp.closest("details")) advBad = true; }
@@ -730,6 +974,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   let frame = 0;
   const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; run({}); }); };
   numIds.forEach((id) => $(id).addEventListener("input", () => { clearExample(); schedule(); }));
+  document.querySelectorAll('input[name="shape1"], input[name="shape2"]').forEach((r) => r.addEventListener("change", () => {
+    showShapes(); layoutSeg(r.closest(".seg"), true); clearExample(); run({});
+  }));
   document.querySelectorAll('input[name="propulsion"]').forEach((r) => r.addEventListener("change", () => {
     layoutSeg(r.closest(".seg"), true); clearExample(); run({});
   }));
@@ -749,7 +996,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (!validate()) {
       $("verdict").innerHTML = `<div class="v-head"><span class="chip-s bad">${ICON_WARN} Check inputs</span></div>
         <h2 class="v-name"><span class="main">Some values need fixing</span></h2>
-        <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero.</p>`;
+        <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero. An orbit's apoapsis can't be below its periapsis.</p>`;
       return;
     }
     const m = readMission();
@@ -781,6 +1028,10 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (o.key === "bielliptic") return `Coast out to an optimal apoapsis of ${fmtKm(p.rb)} km (${p.rb_over_r1.toFixed(1)} times the initial radius), where a plane change is cheapest, then fall to the target orbit.`;
     if (o.key === "one_tangent") return `A faster transfer ellipse (k = ${p.k.toFixed(4)}, e = ${p.e.toFixed(3)}) meets the target orbit at a ${p.fpa_deg.toFixed(1)}° flight-path angle.${o.note.startsWith("k solved") ? " k is the smallest value that meets the time limit." : ""}`;
     if (o.key === "low_thrust") return `Continuous thrust at ${m.accel_ep} m/s² spirals out over about ${Math.round(o.revs).toLocaleString("en-US")} revolutions. The high Isp keeps the propellant mass low.`;
+    if (o.key === "apse") return o.burns === 1
+      ? `One burn where the two orbits touch puts the spacecraft on the target orbit.${m.di_deg > 0 ? ` It also turns the plane by ${m.di_deg}°.` : ""}`
+      : `Two burns half a transfer ellipse apart, at ${fmtKm(p.rA)} km and ${fmtKm(p.rB)} km from Earth's centre.${m.di_deg > 0 ? ` ${(p.split_at_dep * m.di_deg).toFixed(2)}° of the ${m.di_deg}° plane change is done at departure.` : ""}`;
+    if (o.key === "lambert") return `The cheapest two-burn transfer the Lambert search found: depart at ${p.th1_deg.toFixed(0)}° true anomaly on the start orbit, arrive at ${p.th2_deg.toFixed(0)}° on the target orbit.${p.time_limited ? " The time limit sets the transfer time." : ""}`;
     if (o.burns === 1) return "A single burn at the node rotates the orbit plane. No transfer orbit is needed.";
     return m.di_deg > 0 ? `The ${m.di_deg}° plane change is combined with the burn at the larger radius, where the orbital speed is lowest.` : "Two tangential burns at the ends of the transfer ellipse.";
   }
@@ -831,8 +1082,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       const top = res.rec && res.rec.key === o.key;
       const caption = o.feasible ? cap(sub || (o.key === "bielliptic" ? "three burns via a high apoapsis" : "")) : o.reasons.join("; ");
       r.innerHTML = `<div class="name" role="cell"><span class="dotc"></span><span class="nm"><b>${main}${top ? '<span class="tag">Recommended</span>' : ""}</b>${caption ? `<span>${caption}</span>` : ""}</span></div>
-        <span class="num" role="cell">${o.dv.toFixed(3)}</span><span class="num" role="cell">${fmtTs(o.tof)}</span><span class="num" role="cell">${o.burns || "Cont."}</span>
-        <span class="num" role="cell">${(100 * o.prop_frac).toFixed(1)}%</span><span class="num" role="cell">${o.complexity.toFixed(1)}</span>
+        ${isFinite(o.dv) ? `<span class="num" role="cell">${o.dv.toFixed(3)}</span><span class="num" role="cell">${fmtTs(o.tof)}</span><span class="num" role="cell">${o.burns || "Cont."}</span>
+        <span class="num" role="cell">${(100 * o.prop_frac).toFixed(1)}%</span>` : '<span class="num" role="cell">–</span>'.repeat(4)}<span class="num" role="cell">${o.complexity.toFixed(1)}</span>
         <div class="score" role="cell">${o.feasible
           ? `<div class="track"><div class="bar"><i></i></div><span class="val">${o.score_ws.toFixed(2)}</span></div><span>TOPSIS ${o.score_topsis.toFixed(2)}</span>`
           : '<span>Not scored</span>'}</div>`;
@@ -967,18 +1218,37 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }
     return { pts, burns, rmax };
   }
+  // Elliptical missions: fly the vector burn plan and draw its top view (polar points, like geometry()).
+  function ellGeometry(o, res) {
+    let rmax = Math.max(res.ra1, res.ra2);
+    if (!o.applicable) return { pts: [], burns: [], rmax };
+    const sim = O.simulateVec(o.y0, o.plan, 0, 240);
+    const pts = sim.pts.map(([x, y]) => [Math.hypot(x, y), Math.atan2(y, x)]);
+    pts.forEach(([r]) => { rmax = Math.max(rmax, r); });
+    return { pts, burns: sim.burnIdx, rmax };
+  }
   function renderGeo(m, res, animate) {
     const svg = $("geo"); svg.innerHTML = "";
     const o = res.opts.find((x) => x.key === selected) || res.opts[0];
     const r1 = res.r1, r2 = res.r2, W = 360, H = 330, cx = W / 2, cy = H / 2;
     const [main, sub] = splitName(o.name);
     $("geoTitle").textContent = main + (sub ? ", " + sub : "");
-    const { pts, burns, rmax } = geometry(o, r1, r2);
+    const { pts, burns, rmax } = res.ell ? ellGeometry(o, res) : geometry(o, r1, r2);
     const S = (Math.min(W, H) / 2 - 26) / rmax;
     const P = ([r, th]) => [cx + r * Math.cos(th) * S, cy - r * Math.sin(th) * S];
     el("circle", { cx, cy, r: Math.max(6378.137 * S, 3) }, svg, { fill: "var(--earth)" });
-    el("circle", { cx, cy, r: r1 * S }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
-    if (Math.abs(r2 - r1) > 1e-6) el("circle", { cx, cy, r: r2 * S, "stroke-dasharray": "4 5" }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+    if (res.ell) {         // top view of both orbits; the target plane is turned by di about x
+      const outline = (rp, ra, di, dw, attrs) => {
+        const d = [];
+        for (let i = 0; i < 180; i++) { const q = O.orbitState(rp, ra, di, dw, 2 * Math.PI * i / 180).r; d.push((cx + q[0] * S).toFixed(1) + " " + (cy - q[1] * S).toFixed(1)); }
+        el("path", Object.assign({ d: "M" + d.join("L") + "Z" }, attrs), svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+      };
+      outline(r1, res.ra1, 0, 0, {});
+      outline(r2, res.ra2, m.di_deg * Math.PI / 180, m.dw_deg * Math.PI / 180, { "stroke-dasharray": "4 5" });
+    } else {
+      el("circle", { cx, cy, r: r1 * S }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+      if (Math.abs(r2 - r1) > 1e-6) el("circle", { cx, cy, r: r2 * S, "stroke-dasharray": "4 5" }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+    }
     const c = col(o.key), XY = pts.map(P);
     const markers = burns.map((idx, i) => {
       const [x, y] = XY[idx], th = pts[idx][1], right = Math.cos(th) >= -0.2;
@@ -990,7 +1260,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     });
     if (XY.length < 2) {
       markers.forEach((b) => b.g.classList.add("on"));
-      $("geoSub").textContent = `The plane change happens on the initial ${fmtKm(m.alt1)} km orbit. Top view, to scale.`;
+      $("geoSub").textContent = !res.ell ? `The plane change happens on the initial ${fmtKm(m.alt1)} km orbit. Top view, to scale.`
+        : o.applicable ? "One burn where the orbits touch. Top view, to scale. Solid: start orbit. Dashed: target orbit."
+        : `Not available: ${o.note}.`;
       return;
     }
     const cum = [0];
@@ -1017,6 +1289,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }, animate ? { from: 0, response: 1.05, eps: 1e-4 } : { snap: true });
     $("geoSub").textContent = o.key === "low_thrust"
       ? `Schematic spiral: 6 turns drawn, about ${Math.round(o.revs).toLocaleString("en-US")} in flight.`
+      : res.ell ? `Top view, to scale. Solid: start orbit. Dashed: target orbit.${m.di_deg > 0 ? ` Its plane is tilted ${m.di_deg}°, so it looks narrower here.` : ""}`
       : `Top view, to scale. Solid: ${fmtKm(m.alt1)} km start orbit. Dashed: ${fmtKm(m.alt2)} km target.${m.di_deg > 0 ? ` The ${m.di_deg}° plane change is out of this view.` : ""}`;
   }
 
