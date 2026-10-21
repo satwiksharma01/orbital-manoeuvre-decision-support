@@ -1,0 +1,44 @@
+%  Single burn at the apoapsis of an elliptical orbit, solved by GMAT's own
+%  differential corrector: circularise at the apoapsis radius and turn the plane.
+%  Filled in and run by python/gmat_crosscheck.py; placeholders such as $$sma
+%  are replaced before GMAT sees the file. The apoapsis (TA = 180, AOP = 0) is
+%  the descending node, so the plane rotates about the apse line.
+
+Create Spacecraft Sat;
+Sat.DateFormat = UTCGregorian;
+Sat.Epoch = '01 Jan 2026 12:00:00.000';
+Sat.CoordinateSystem = EarthMJ2000Eq;
+Sat.DisplayStateType = Keplerian;
+Sat.SMA = $sma;
+Sat.ECC = $ecc;
+Sat.INC = $inc1;
+Sat.RAAN = 0;
+Sat.AOP = 0;
+Sat.TA = 180;
+
+Create ForceModel FM;
+FM.CentralBody = Earth;
+FM.PointMasses = {Earth};
+
+Create ImpulsiveBurn GOI;
+GOI.CoordinateSystem = Local;
+GOI.Origin = Earth;
+GOI.Axes = VNB;
+
+Create DifferentialCorrector DC;
+DC.MaximumIterations = 50;
+
+Create ReportFile Rpt;
+Rpt.Filename = '$report';
+Rpt.WriteHeaders = false;
+Rpt.Precision = 16;
+
+BeginMissionSequence;
+Target DC {SolveMode = Solve, ExitMode = SaveAndContinue};
+   Vary DC(GOI.Element1 = $dvv, {Perturbation = 1e-6, MaxStep = 0.2});
+   Vary DC(GOI.Element2 = $dvn, {Perturbation = 1e-6, MaxStep = 0.2});
+   Maneuver GOI(Sat);
+   Achieve DC(Sat.Earth.SMA = $r2, {Tolerance = 1e-7});
+   Achieve DC(Sat.EarthMJ2000Eq.INC = $inc2, {Tolerance = 1e-9});
+EndTarget;
+Report Rpt GOI.Element1 GOI.Element2 GOI.Element3 Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;
