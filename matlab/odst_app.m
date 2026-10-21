@@ -14,7 +14,7 @@ C = odst_const();
 ARW = char(8594); DEG = char(176); DEL = char(916);
 CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = char(183);
 
-defaults = struct('alt1', 400, 'alt2', 35786, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
+defaults = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced');
 examples = {
@@ -25,10 +25,13 @@ examples = {
                                        'tof_max_h', 0.6, 'preset', 'Time-critical')
     'All-electric GEO',         struct('tof_max_h', 8760, 'preset', 'Propellant-critical')
     ['60' DEG ' plane change'], struct('alt1', 500, 'alt2', 500, 'di_deg', 60, 'dv_budget', 10, ...
-                                       'tof_max_h', 4800, 'propulsion', 'chemical', 'preset', 'Propellant-critical')};
+                                       'tof_max_h', 4800, 'propulsion', 'chemical', 'preset', 'Propellant-critical')
+    ['GTO ' ARW ' GEO'],         struct('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'propulsion', 'chemical')
+    ['LEO ' ARW ' Molniya'],     struct('alt2', 600, 'apo2', 39700, 'dw_deg', 270, 'di_deg', 0, ...
+                                       'propulsion', 'chemical')};
 
 % ---- state shared by the nested callbacks
-prop = 'both'; selected = ''; manual = false; order = {};
+prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; selected = ''; manual = false; order = {};
 lastM = []; lastOpts = []; lastRec = []; lastAdv = {};
 h = struct();
 
@@ -63,10 +66,15 @@ left.RowHeight = {18, 128, 22, 128, 22, 38, 22, 208, 22, 208};
 if isprop(left, 'Scrollable'), left.Scrollable = 'on'; end
 
 groupTitle(left, 'Orbits');
-g = listPanel(left, 3);
-h.alt1 = numRow(g, 'Initial altitude', defaults.alt1, [0 Inf], 'km');
-h.alt2 = numRow(g, 'Target altitude', defaults.alt2, [0 Inf], 'km');
-h.di   = numRow(g, 'Inclination change', defaults.di_deg, [0 180], 'deg');
+h.orbGrid = listPanel(left, 8);
+h.shape1 = shapeRow(h.orbGrid, 'Initial orbit', 1);
+[h.alt1, h.alt1Lbl] = numRow(h.orbGrid, 'Initial altitude', defaults.alt1, [0 Inf], 'km');
+h.apo1 = numRow(h.orbGrid, 'Initial apoapsis', defaults.alt1, [0 Inf], 'km');
+h.shape2 = shapeRow(h.orbGrid, 'Target orbit', 2);
+[h.alt2, h.alt2Lbl] = numRow(h.orbGrid, 'Target altitude', defaults.alt2, [0 Inf], 'km');
+h.apo2 = numRow(h.orbGrid, 'Target apoapsis', defaults.alt2, [0 Inf], 'km');
+h.dw   = numRow(h.orbGrid, ['Target apse angle ' DEL char(969)], defaults.dw_deg, [0 360], 'deg');
+h.di   = numRow(h.orbGrid, 'Inclination change', defaults.di_deg, [0 180], 'deg');
 
 groupTitle(left, 'Constraints');
 g = listPanel(left, 3);
@@ -161,6 +169,7 @@ h.rules.WordWrap = 'on'; h.rules.VerticalAlignment = 'top';
 % ================================================================ start
 applyPreset('Balanced');
 setSeg(h.propSeg, prop);
+layoutOrbits();
 highlightChip(1);
 update(false);
 
@@ -170,7 +179,11 @@ update(false);
         v = examples{i, 2};
         fn = fieldnames(v);
         for f = 1:numel(fn), d.(fn{f}) = v.(fn{f}); end
-        h.alt1.Value = d.alt1; h.alt2.Value = d.alt2; h.di.Value = d.di_deg;
+        h.alt1.Value = d.alt1; h.alt2.Value = d.alt2; h.di.Value = d.di_deg; h.dw.Value = d.dw_deg;
+        h.apo1.Value = max(d.alt1, d.apo1); h.apo2.Value = max(d.alt2, d.apo2);     % max ignores NaN
+        shape1 = 'circular'; if ~isnan(d.apo1), shape1 = 'elliptical'; end
+        shape2 = 'circular'; if ~isnan(d.apo2), shape2 = 'elliptical'; end
+        layoutOrbits();
         h.dvb.Value = d.dv_budget; h.mrg.Value = d.margin_pct; h.tof.Value = d.tof_max_h; h.rbm.Value = d.rb_max;
         h.ispc.Value = d.isp_chem; h.tw.Value = d.tw_chem; h.ispe.Value = d.isp_ep; h.acc.Value = d.accel_ep;
         prop = d.propulsion; setSeg(h.propSeg, prop);
@@ -189,6 +202,25 @@ update(false);
         prop = v; setSeg(h.propSeg, v);
         highlightChip(0);
         update(false);
+    end
+
+    function pickShape(k2, v)
+        if k2 == 1, shape1 = v; else, shape2 = v; end
+        layoutOrbits();
+        highlightChip(0);
+        update(false);
+    end
+
+    function layoutOrbits()
+        % Rows of the Orbits card: shape, peri, apo (initial); shape, peri, apo, dw (target); di
+        e1 = strcmp(shape1, 'elliptical'); e2 = strcmp(shape2, 'elliptical');
+        rows = [1 1 e1 1 1 e2 e2 1];
+        h.orbGrid.RowHeight = num2cell(40*rows);
+        set([h.apo1.Parent, h.apo2.Parent, h.dw.Parent], {'Visible'}, {onOff(e1); onOff(e2); onOff(e2)});
+        left.RowHeight{2} = 8 + 40*sum(rows);
+        setSeg(h.shape1, shape1); setSeg(h.shape2, shape2);
+        if e1, h.alt1Lbl.Text = 'Initial periapsis'; else, h.alt1Lbl.Text = 'Initial altitude'; end
+        if e2, h.alt2Lbl.Text = 'Target periapsis'; else, h.alt2Lbl.Text = 'Target altitude'; end
     end
 
     function pickPreset(v)
@@ -241,7 +273,11 @@ update(false);
     function update(animate)
         w = arrayfun(@(s) s.Value, h.w);
         if sum(w) <= 0, w = [1 1 1 1]; end
-        m = odst_mission('alt1', h.alt1.Value, 'alt2', h.alt2.Value, 'di_deg', h.di.Value, ...
+        apo1 = NaN; apo2 = NaN;          % an apoapsis below the periapsis is raised to it
+        if strcmp(shape1, 'elliptical'), apo1 = max(h.apo1.Value, h.alt1.Value); h.apo1.Value = apo1; end
+        if strcmp(shape2, 'elliptical'), apo2 = max(h.apo2.Value, h.alt2.Value); h.apo2.Value = apo2; end
+        m = odst_mission('alt1', h.alt1.Value, 'alt2', h.alt2.Value, 'apo1', apo1, 'apo2', apo2, ...
+            'dw_deg', h.dw.Value, 'di_deg', h.di.Value, ...
             'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
             'isp_chem', h.ispc.Value, 'tw_chem', h.tw.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
             'rb_max', h.rbm.Value, 'weights', w);
@@ -319,6 +355,7 @@ update(false);
             end
             D(r, :) = {o.name, sprintf('%.3f', o.dv), odst_fmt_time(o.tof), burnsText(o.burns), ...
                        sprintf('%.1f%%', 100*o.prop_frac), sprintf('%.1f', o.complexity), score, tops, status};
+            if isnan(o.dv), D(r, 2:5) = {'-'}; end      % an elliptical model that doesn't apply
         end
         h.tbl.Data = D;
         h.tbl.ColumnWidth = {250, 76, 76, 52, 80, 82, 58, 60, 'auto'};
@@ -395,22 +432,40 @@ update(false);
         o = opts(strcmp({opts.key}, selected));
         if isempty(o), o = opts(1); end
         r1 = C.RE + m.alt1; r2 = C.RE + m.alt2; k = 1e-3;
+        ra1 = C.RE + max(m.alt1, m.apo1); ra2 = C.RE + max(m.alt2, m.apo2);   % max ignores NaN
+        ell = any(strcmp({opts.key}, 'apse'));
         cla(ax); hold(ax, 'on');
         th = linspace(0, 2*pi, 361);
         fill(ax, k*C.RE*cos(th), k*C.RE*sin(th), T.earth, 'EdgeColor', 'none');
-        plot(ax, k*r1*cos(th), k*r1*sin(th), 'Color', T.orbit, 'LineWidth', 1);
-        if abs(r2 - r1) > 1e-6
-            plot(ax, k*r2*cos(th), k*r2*sin(th), '--', 'Color', T.orbit, 'LineWidth', 1);
+        if ell        % top view of both orbits; the target's plane is turned by di about x
+            [x1, y1] = outline(r1, ra1, 0, 0); [x2, y2] = outline(r2, ra2, m.di_deg*pi/180, m.dw_deg*pi/180);
+            plot(ax, k*x1, k*y1, 'Color', T.orbit, 'LineWidth', 1);
+            plot(ax, k*x2, k*y2, '--', 'Color', T.orbit, 'LineWidth', 1);
+            r1 = ra1; r2 = ra2;                                  % for the axis limits below
+        else
+            plot(ax, k*r1*cos(th), k*r1*sin(th), 'Color', T.orbit, 'LineWidth', 1);
+            if abs(r2 - r1) > 1e-6
+                plot(ax, k*r2*cos(th), k*r2*sin(th), '--', 'Color', T.orbit, 'LineWidth', 1);
+            end
         end
         c = T.series.(o.key);
         [a, b] = splitName(o.name);
-        if isempty(b), h.geoTitle.Text = a; else, h.geoTitle.Text = [a ', ' lower(b)]; end
+        if isempty(b), h.geoTitle.Text = a; else, h.geoTitle.Text = [a ', ' lower(b(1)) b(2:end)]; end
         if strcmp(o.key, 'low_thrust')
             f = linspace(0, 1, 700); rr = r1 + (r2 - r1)*f; aa = 12*pi*f;      % 6 turns drawn
             X = k*rr.*cos(aa); Y = k*rr.*sin(aa); bi = [];
             v1 = sqrt(C.MU/r1); v2 = sqrt(C.MU/r2);
             revs = abs(v1^4 - v2^4)/(8*pi*C.MU*m.accel_ep*1e-3);
             h.geoSub.Text = sprintf('Schematic spiral: 6 turns drawn, about %s in flight.', commas(revs));
+        elseif ell && ~o.applicable
+            X = []; Y = []; bi = [];
+            h.geoSub.Text = ['Not available: ' o.note '.'];
+        elseif ell
+            [tt, YY] = odst_simulate_vec(o.y0, o.vplan, 0);
+            X = k*YY(:, 1).'; Y = k*YY(:, 2).';
+            bi = zeros(1, size(o.vplan, 1));
+            for q = 1:size(o.vplan, 1), [~, bi(q)] = min(abs(tt - o.vplan(q, 1))); end
+            h.geoSub.Text = 'Top view in 10^3 km. Solid: start orbit, dashed: target orbit.';
         elseif isempty(o.plan) || o.burns == 1
             X = k*r1; Y = 0; bi = 1;
             h.geoSub.Text = 'A single burn on the initial orbit rotates the plane.';
@@ -461,6 +516,15 @@ update(false);
         if isvalid(ax), hold(ax, 'off'); end
     end
 
+    function [x, y] = outline(rp, ra, di, dw)
+        ang = linspace(0, 2*pi, 361);
+        x = zeros(size(ang)); y = x;
+        for q = 1:numel(ang)
+            r = odst_orbit_state(rp, ra, di, dw, ang(q));
+            x(q) = r(1); y(q) = r(2);
+        end
+    end
+
     function renderRules()
         h.rules.Text = strcat({[BUL '  ']}, lastAdv);
     end
@@ -484,6 +548,24 @@ update(false);
             case 'low_thrust'
                 s = sprintf('Continuous thrust at %g m/s%s spirals out to the target. The high Isp keeps the propellant mass low.', ...
                     m.accel_ep, char(178));
+            case 'apse'
+                if o.burns == 1
+                    s = 'One burn where the two orbits touch puts the spacecraft on the target orbit.';
+                    if m.di_deg > 0
+                        s = sprintf('%s It also turns the plane by %g%s.', s, m.di_deg, DEG);
+                    end
+                else
+                    s = sprintf('Two burns half a transfer ellipse apart, at %s km and %s km from Earth''s centre.', ...
+                        commas(p.rA), commas(p.rB));
+                    if m.di_deg > 0
+                        s = sprintf('%s %.2f%s of the %g%s plane change is done at departure.', s, ...
+                            p.split_at_dep*m.di_deg, DEG, m.di_deg, DEG);
+                    end
+                end
+            case 'lambert'
+                s = sprintf(['The cheapest two-burn transfer the Lambert search found: depart at %.0f%s true ' ...
+                    'anomaly on the start orbit, arrive at %.0f%s on the target orbit.'], p.th1_deg, DEG, p.th2_deg, DEG);
+                if p.time_limited, s = [s ' The time limit sets the transfer time.']; end
             otherwise
                 if o.burns == 1
                     s = 'A single burn at the node rotates the orbit plane. No transfer orbit is needed.';
@@ -502,6 +584,8 @@ update(false);
             case 'hohmann_split', n = 'Hohmann split';
             case 'bielliptic',    n = 'Bi-elliptic';
             case 'one_tangent',   n = 'One-tangent';
+            case 'apse',          n = 'Apse-to-apse';
+            case 'lambert',       n = 'Lambert';
             otherwise,            n = 'Low-thrust';
         end
     end
@@ -517,6 +601,7 @@ update(false);
         else
             a = n(1:q(1) - 1); b = n(q(1) + 2:end - 1);
             b(1) = upper(b(1));
+            b = strrep(strrep(b, ' di ', [' ' DEL 'i ']), ' dv', [' ' DEL 'v']);
         end
     end
 
@@ -544,14 +629,26 @@ update(false);
                           'RowSpacing', 0, 'BackgroundColor', T.surface);
     end
 
-    function f = numRow(g2, label, value, limits, unit)
+    function [f, L] = numRow(g2, label, value, limits, unit)
         r = uigridlayout(g2, [1 3], 'ColumnWidth', {'1x', 96, 42}, 'Padding', [0 0 0 0], ...
                          'ColumnSpacing', 6, 'BackgroundColor', T.surface);
-        lbl(r, label, 13.5, T.label);
+        L = lbl(r, label, 13.5, T.label);
         f = uieditfield(r, 'numeric', 'Value', value, 'Limits', limits, 'HorizontalAlignment', 'right', ...
+                        'ValueDisplayFormat', '%.10g', ...
                         'FontName', T.font, 'FontSize', 13.5, 'FontColor', T.label, ...
                         'BackgroundColor', T.surface, 'ValueChangedFcn', @(~, ~) inputsEdited());
         lbl(r, unit, 12, T.label3);
+    end
+
+    function seg = shapeRow(g2, label, k2)
+        r = uigridlayout(g2, [1 2], 'ColumnWidth', {'1x', 170}, 'Padding', [0 4 0 4], ...
+                         'ColumnSpacing', 6, 'BackgroundColor', T.surface);
+        lbl(r, label, 13.5, T.label);
+        seg = segmented(r, {'Circular', 'Elliptical'}, {'circular', 'elliptical'}, @(v) pickShape(k2, v));
+    end
+
+    function s = onOff(tf)
+        if tf, s = 'on'; else, s = 'off'; end
     end
 
     function [s, valueLbl] = sliderRow(g2, label, value, k2)

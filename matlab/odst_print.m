@@ -1,7 +1,11 @@
 function odst_print(m, opts, rec, advice)
 %ODST_PRINT Print the decision table, recommendation and rule advice.
-fprintf('\nMission: alt %.0f -> %.0f km, di = %.2f deg, budget %.2f km/s (margin %g%%, T/W %g), TOF max %.1f h\n', ...
-        m.alt1, m.alt2, m.di_deg, m.dv_budget, m.margin_pct, m.tw_chem, m.tof_max_h);
+o1 = sprintf('%.0f', m.alt1); o2 = sprintf('%.0f', m.alt2); dw = '';
+if ~isnan(m.apo1), o1 = sprintf('%.0f x %.0f', m.alt1, m.apo1); end
+if ~isnan(m.apo2), o2 = sprintf('%.0f x %.0f', m.alt2, m.apo2); end
+if ~isnan(m.apo1) || ~isnan(m.apo2), dw = sprintf(', dw = %g deg', m.dw_deg); end
+fprintf('\nMission: alt %s -> %s km, di = %.2f deg%s, budget %.2f km/s (margin %g%%, T/W %g), TOF max %.1f h\n', ...
+        o1, o2, m.di_deg, dw, m.dv_budget, m.margin_pct, m.tw_chem, m.tof_max_h);
 fprintf('Weights [dv prop TOF cplx] = [%s], propulsion: %s\n', num2str(m.weights), m.propulsion);
 fprintf('%-38s %8s %8s %11s %5s %7s %5s %6s %7s  %s\n', 'Option', 'dv km/s', 'loss m/s', 'TOF', ...
         'burns', 'mp/m0', 'cplx', 'WS', 'TOPSIS', 'status');

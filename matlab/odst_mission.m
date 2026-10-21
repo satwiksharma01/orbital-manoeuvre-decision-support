@@ -2,7 +2,9 @@ function m = odst_mission(varargin)
 %ODST_MISSION Default mission definition, optionally overridden by name/value pairs.
 %   m = odst_mission('alt1', 400, 'alt2', 35786, 'di_deg', 28.5)
 %
-%   alt1, alt2     initial / target circular altitude [km]
+%   alt1, alt2     initial / target altitude, the periapsis if elliptical [km]
+%   apo1, apo2     initial / target apoapsis altitude [km]; NaN = circular
+%   dw_deg         target apse line, from the start orbit's periapsis [deg]
 %   di_deg         inclination change [deg]
 %   dv_budget      available delta-v [km/s]
 %   margin_pct     delta-v margin the budget must also cover [%]
@@ -15,7 +17,7 @@ function m = odst_mission(varargin)
 %   rb_max         upper bound on bi-elliptic apoapsis radius [km]
 %   k_one_tangent  default one-tangent apsis factor (used when no TOF pressure)
 %   weights        MCDA weights [dv, propellant, TOF, complexity]
-m = struct('alt1', 400, 'alt2', 35786, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, ...
+m = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, ...
            'tof_max_h', 24*200, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, ...
            'isp_ep', 1600, 'accel_ep', 5e-4, 'rb_max', 384400, ...
            'k_one_tangent', 1.5, 'weights', [0.30 0.20 0.30 0.20]);
