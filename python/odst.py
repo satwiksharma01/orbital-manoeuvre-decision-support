@@ -252,6 +252,8 @@ def low_thrust(r1, r2, di, accel_ms2):
 # these plans are (t, dv_vec) rows with the start state y0, not the circular format.
 ELL_TOL = 1e-6          # km: apoapsis - periapsis below this is a circular orbit
 DV_ZERO = 1e-9          # km/s: burns smaller than this are dropped
+H_ARC_MIN = 100.0       # km: a Lambert transfer arc may not pass below this altitude
+K_SEARCH, K_POLISH = 0.01, 10.0   # km/s per km below H_ARC_MIN: gentle penalty to search, stiff to finish
 
 
 def _on_node_line(ang):
@@ -280,6 +282,21 @@ def orbit_state(rp, ra, P, Q, th):
     r = orbit_radius(rp, ra, th)
     return (r * (math.cos(th) * P + math.sin(th) * Q),
             math.sqrt(MU / p) * (-math.sin(th) * P + (e + math.cos(th)) * Q))
+
+
+def arc_min_radius(r1v, v1v, r2v):
+    """Lowest radius on the conic from r1v (velocity v1v) forward to r2v: the transfer's
+    periapsis radius if periapsis lies between them, otherwise the lower end point."""
+    h = np.cross(r1v, v1v)
+    ev = np.cross(v1v, h) / MU - r1v / np.linalg.norm(r1v)
+    e, ends = np.linalg.norm(ev), min(np.linalg.norm(r1v), np.linalg.norm(r2v))
+    if e < 1e-10:
+        return ends
+    q = np.cross(h, ev)                      # 90 deg ahead of periapsis, in the direction of motion
+    nu = lambda r: math.atan2(np.dot(q, r) / np.linalg.norm(q), np.dot(ev, r) / e) % (2 * math.pi)
+    if nu(r2v) < nu(r1v):                    # moving forward from r1 to r2 wraps through periapsis
+        return min(ends, np.dot(h, h) / MU / (1 + e))
+    return ends
 
 
 def stumpff(z):
@@ -422,8 +439,12 @@ def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
     """Minimum-dv two-impulse Lambert transfer over departure true anomaly, arrival true
     anomaly and transfer time (60 s to min(tof_max, the longer orbital period)).
     Transfers within 0.5 deg of 0 or 180 deg are skipped: there the transfer plane is
-    undefined. Grid n_grid x n_grid with a golden-section search on time per cell,
-    then Nelder-Mead from the best cell."""
+    undefined. Grid n_grid x n_grid with a golden-section search on time per cell, then
+    Nelder-Mead from the best cell, restarted once.
+    The arc must stay above H_ARC_MIN altitude. That floor is an exact penalty, not a wall:
+    a wall stops Nelder-Mead short of the boundary (46 m/s high on a floor-active case in the
+    2026-10-22 audit). The search uses K_SEARCH and the final polish K_POLISH, so the result
+    sits on or above the floor; a result still below it is rejected."""
     P1, Q1 = orbit_basis(0.0, 0.0)
     P2, Q2 = orbit_basis(di, dw)
     tmin = 60.0
@@ -432,7 +453,7 @@ def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
         return None
     gap = math.sin(math.radians(0.5))
 
-    def solve(x):
+    def solve(x, K):
         th1, th2, u = x
         if not 0.0 <= u <= 1.0:
             return math.inf, None
@@ -444,9 +465,11 @@ def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
         if sol is None:
             return math.inf, None
         dv1v, dv2v = sol[0] - v1v, v2v - sol[1]
-        return np.linalg.norm(dv1v) + np.linalg.norm(dv2v), (r1v, v1v, r2v, dv1v, dv2v)
+        dv = np.linalg.norm(dv1v) + np.linalg.norm(dv2v)
+        short = RE + H_ARC_MIN - arc_min_radius(r1v, sol[0], r2v)          # km below the floor, if > 0
+        return dv + K * max(0.0, short), (r1v, v1v, r2v, dv1v, dv2v, dv, short)
 
-    cost = lambda x: solve(x)[0]
+    cost = lambda x: solve(x, K_SEARCH)[0]
     g = (math.sqrt(5) - 1) / 2
     best = (math.inf, None)
     for i in range(n_grid):
@@ -471,8 +494,12 @@ def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
     if not math.isfinite(best[0]):
         return None
     step = 2 * math.pi / n_grid
-    x, fx = _nelder_mead(cost, best[1], [step / 2, step / 2, 0.05])
-    _, (r1v, v1v, r2v, dv1v, dv2v) = solve(x)
+    x, _ = _nelder_mead(cost, best[1], [step / 2, step / 2, 0.05])
+    x, _ = _nelder_mead(cost, x, [step / 4, step / 4, 0.02])                 # restart: Nelder-Mead can stall
+    x, _ = _nelder_mead(lambda y: solve(y, K_POLISH)[0], x, [step / 8, step / 8, 0.01])
+    _, (r1v, v1v, r2v, dv1v, dv2v, fx, short) = solve(x, K_POLISH)
+    if short > 1e-6:
+        return None
     T = tmin + x[2] * (tmax - tmin)
     return {"dv": fx, "tof": T, "burns": 2, "y0": np.concatenate([r1v, v1v]), "plan": [(0.0, dv1v), (T, dv2v)],
             "legs": [(np.linalg.norm(r1v), np.linalg.norm(dv1v)), (np.linalg.norm(r2v), np.linalg.norm(dv2v))],

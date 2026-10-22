@@ -4,9 +4,9 @@ import sys
 
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize_scalar
 
-from odst import (G0, MU, RE, Mission, apse_transfer, bielliptic, evaluate, gravity_loss, hohmann,
+from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, evaluate, gravity_loss, hohmann,
                   hohmann_optimal_split, lambert, lambert_optimal, low_thrust, one_tangent, orbit_elements,
                   print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
 
@@ -133,11 +133,39 @@ check("Lambert optimum, coplanar 7000 -> 14000 km, vs Hohmann [m/s]",
 ell = [Mission(alt1=250, apo1=35786, alt2=35786, di_deg=28.5),                  # GTO -> GEO
        Mission(alt1=400, alt2=600, apo2=39700, dw_deg=270, di_deg=0),           # LEO -> Molniya
        Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=0), # apse lines 60 deg apart
-       Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=10)]
+       Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=10),
+       Mission(alt1=300, apo1=12500, alt2=350, apo2=8600, dw_deg=90, di_deg=0, tof_max_h=1950 / 3600)]  # 100 km floor active
 r = lambda a: RE + a
 coarse = lambert_optimal(r(500), r(5000), r(800), r(12000), math.radians(10), math.radians(60), 1e9)["dv"]
 fine = lambert_optimal(r(500), r(5000), r(800), r(12000), math.radians(10), math.radians(60), 1e9, n_grid=48)["dv"]
 check("Lambert search, 16x16 grid vs 48x48 grid, misaligned + 10 deg [m/s]", 1e3 * coarse, 1e3 * fine, 0.01)
+# Lowest point of a conic arc: closed form vs a propagated trajectory, refined to the true minimum
+rng, worst = np.random.default_rng(3), 0.0
+for _ in range(40):
+    a, b = rng.uniform(6700, 30000, 2)
+    u1, u2 = (v / np.linalg.norm(v) for v in rng.normal(size=(2, 3)))
+    dt = math.sqrt((a + b) ** 3 / MU) * rng.uniform(0.05, 2.5)
+    s = lambert(a * u1, b * u2, dt)
+    if s is None:
+        continue
+    run = solve_ivp(lambda t, y: np.concatenate([y[3:], -MU * y[:3] / np.linalg.norm(y[:3]) ** 3]), (0, dt),
+                    np.concatenate([a * u1, s[0]]), rtol=1e-12, atol=1e-12, dense_output=True)
+    ts = np.linspace(0, dt, 2001)
+    k = int(np.argmin([np.linalg.norm(run.sol(t)[:3]) for t in ts]))
+    num = minimize_scalar(lambda t: np.linalg.norm(run.sol(t)[:3]), bounds=(ts[max(k - 1, 0)], ts[min(k + 1, 2000)]),
+                          method="bounded", options={"xatol": 1e-9}).fun
+    num = min(num, a, b)                     # the bounded search never lands exactly on an end point
+    worst = max(worst, abs(num - arc_min_radius(a * u1, s[0], b * u2)))
+check("Lowest point of 40 random transfer arcs, closed form vs propagation [km]", worst, 0.0, 1e-6)
+# 100 km floor: without it this mission's optimum dives 327 km below the surface (audit, 2026-10-22).
+# Global optimum with the floor, from differential evolution (8 runs agree): 2.546787011 km/s.
+m = ell[-1]
+o = next(o for o in evaluate(m) if o.key == "lambert")
+y = np.array(o.y0, float); y[3:] += o.vec_plan[0][1]
+_, _, y2, _ = simulate_vec(y, [], coast_after=o.vec_plan[1][0])
+check("Floor-active Lambert: the arc's lowest point sits on the 100 km floor [km altitude]",
+      arc_min_radius(y[:3], y[3:], y2[:3]) - RE, H_ARC_MIN, 1e-3)
+check("Floor-active Lambert vs the global optimum [m/s]", 1e3 * o.dv, 2546.787011, 0.01)
 for m in ell:
     for o in evaluate(m):
         if not o.applicable:

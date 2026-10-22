@@ -527,7 +527,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   // ------------------------------------------------- elliptical orbits and Lambert
   // Same geometry and algorithms as python/odst.py: the start orbit lies in x-y with its
   // periapsis on +x; the target plane is turned by di about +x, its periapsis dw from +x.
-  const ELL_TOL = 1e-6, DV_ZERO = 1e-9;
+  const ELL_TOL = 1e-6, DV_ZERO = 1e-9, H_ARC_MIN = 100;   // km: Lambert arcs may not pass below this altitude
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const norm = (a) => Math.sqrt(dot(a, a));
@@ -542,6 +542,16 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const rr = Math.abs(Math.cos(th) - 1) < 1e-12 ? rp : Math.abs(Math.cos(th) + 1) < 1e-12 ? ra : p / (1 + e * Math.cos(th));
     return { r: mul3(rr, add3(mul3(Math.cos(th), P), mul3(Math.sin(th), Q))),
              v: mul3(Math.sqrt(MU / p), add3(mul3(-Math.sin(th), P), mul3(e + Math.cos(th), Q))), P, Q, rr };
+  }
+  // Lowest radius on the conic from r1v (velocity v1v) forward to r2v: the periapsis radius if
+  // periapsis lies between them, otherwise the lower end point (as arc_min_radius in odst.py).
+  function arcMinRadius(r1v, v1v, r2v) {
+    const h = cross(r1v, v1v), ev = sub3(mul3(1 / MU, cross(v1v, h)), mul3(1 / norm(r1v), r1v));
+    const e = norm(ev), ends = Math.min(norm(r1v), norm(r2v));
+    if (e < 1e-10) return ends;
+    const q = cross(h, ev), nq = norm(q), tau = 2 * Math.PI;           // q: 90 deg ahead of periapsis
+    const nu = (r) => ((Math.atan2(dot(q, r) / nq, dot(ev, r) / e) % tau) + tau) % tau;
+    return nu(r2v) < nu(r1v) ? Math.min(ends, dot(h, h) / MU / (1 + e)) : ends;   // wraps through periapsis
   }
   function stumpff(z) {
     if (z > 1e-8) { const s = Math.sqrt(z); return [(1 - Math.cos(s)) / z, (s - Math.sin(s)) / s ** 3]; }
@@ -636,22 +646,26 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
   // Minimum-dv two-impulse Lambert transfer over departure and arrival true anomaly and time
   // (60 s to min(tofmax, the longer period)): nGrid x nGrid grid with a golden section on time
-  // per cell, then Nelder-Mead from the best cell. Transfers within 0.5 deg of 0 or 180 deg skipped.
+  // per cell, then Nelder-Mead from the best cell, restarted once. Transfers within 0.5 deg of 0 or
+  // 180 deg skipped. The arc must stay above H_ARC_MIN: an exact penalty (gentle to search, stiff to
+  // polish), because a wall stops Nelder-Mead short of the boundary. A result below it is rejected.
   function lambertOptimal(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid = 16) {
     const tmin = 60, per = (rp, ra) => 2 * Math.PI * Math.sqrt(((rp + ra) / 2) ** 3 / MU);
     const tmax = Math.min(tofmax, Math.max(per(rp1, ra1), per(rp2, ra2)));
     if (tmax <= tmin) return null;
     const gap = Math.sin(0.5 * Math.PI / 180);
-    const solve = ([th1, th2, u]) => {
+    const K_SEARCH = 0.01, K_POLISH = 10;                               // km/s per km below the floor
+    const solve = ([th1, th2, u], K) => {
       if (!(u >= 0 && u <= 1)) return [Infinity, null];
       const s1 = orbitState(rp1, ra1, 0, 0, th1), s2 = orbitState(rp2, ra2, di, dw, th2);
       if (norm(cross(s1.r, s2.r)) < gap * norm(s1.r) * norm(s2.r)) return [Infinity, null];
       const sol = lambert(s1.r, s2.r, tmin + u * (tmax - tmin));
       if (!sol) return [Infinity, null];
-      const dv1v = sub3(sol[0], s1.v), dv2v = sub3(s2.v, sol[1]);
-      return [norm(dv1v) + norm(dv2v), { s1, s2, dv1v, dv2v }];
+      const dv1v = sub3(sol[0], s1.v), dv2v = sub3(s2.v, sol[1]), dv = norm(dv1v) + norm(dv2v);
+      const short = RE + H_ARC_MIN - arcMinRadius(s1.r, sol[0], s2.r);   // km below the floor, if > 0
+      return [dv + K * Math.max(0, short), { s1, s2, dv1v, dv2v, dv, short }];
     };
-    const cost = (x) => solve(x)[0], g = (Math.sqrt(5) - 1) / 2;
+    const cost = (x) => solve(x, K_SEARCH)[0], g = (Math.sqrt(5) - 1) / 2;
     let fBest = Infinity, xBest = null;
     for (let i = 0; i < nGrid; i++) for (let j = 0; j < nGrid; j++) {
       const th1 = 2 * Math.PI * i / nGrid, th2 = 2 * Math.PI * j / nGrid;
@@ -665,9 +679,13 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }
     if (!isFinite(fBest)) return null;
     const step = 2 * Math.PI / nGrid;
-    const [x, fx] = nelderMead(cost, xBest, [step / 2, step / 2, 0.05]);
-    const { s1, s2, dv1v, dv2v } = solve(x)[1], T = tmin + x[2] * (tmax - tmin), deg = (r) => ((r * 180 / Math.PI) % 360 + 360) % 360;
-    return { dv: fx, tof: T, burns: 2, y0: [...s1.r, ...s1.v], plan: [[0, dv1v], [T, dv2v]],
+    let [x] = nelderMead(cost, xBest, [step / 2, step / 2, 0.05]);
+    [x] = nelderMead(cost, x, [step / 4, step / 4, 0.02]);                 // restart: Nelder-Mead can stall
+    [x] = nelderMead((y) => solve(y, K_POLISH)[0], x, [step / 8, step / 8, 0.01]);
+    const { s1, s2, dv1v, dv2v, dv, short } = solve(x, K_POLISH)[1];
+    if (short > 1e-6) return null;
+    const T = tmin + x[2] * (tmax - tmin), deg = (r) => ((r * 180 / Math.PI) % 360 + 360) % 360;
+    return { dv, tof: T, burns: 2, y0: [...s1.r, ...s1.v], plan: [[0, dv1v], [T, dv2v]],
              legs: [[norm(s1.r), norm(dv1v)], [norm(s2.r), norm(dv2v)]],
              params: { th1_deg: deg(x[0]), th2_deg: deg(x[1]), time_limited: x[2] > 1 - 1e-6 } };
   }
@@ -814,7 +832,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
 
   const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
-                orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch };
+                orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>

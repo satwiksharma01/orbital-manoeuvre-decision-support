@@ -64,12 +64,14 @@ check("Lambert optimum, coplanar 7000 -> 14000 km, vs Hohmann [m/s]", 1e3 * O.la
       1e3 * O.hohmann(7000, 14000, 0).dv, 1.0);
 // reference dv [km/s] and TOF [s] from python/odst.py; null = not applicable
 const ell = [
-  [{ alt1: 250, apo1: 35786, alt2: 35786, di_deg: 28.5 }, [[1.833344084, 0], [1.833344097, 20504.3295]], "apse"],
+  [{ alt1: 250, apo1: 35786, alt2: 35786, di_deg: 28.5 }, [[1.833344084, 0], [1.833344097, 20504.3564]], "apse"],
   [{ alt1: 400, alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0 }, [[2.476172306, 21378.6762], [2.476173769, 21646.7968]], "apse"],
   [{ alt1: 500, apo1: 5000, alt2: 800, apo2: 12000, dw_deg: 60, di_deg: 0 }, [null, [1.183670980, 9359.7970]], "lambert"],
-  [{ alt1: 500, apo1: 5000, alt2: 800, apo2: 12000, dw_deg: 60, di_deg: 10 }, [null, [1.859013203, 3601.2405]], "lambert"],
+  [{ alt1: 500, apo1: 5000, alt2: 800, apo2: 12000, dw_deg: 60, di_deg: 10 }, [null, [1.859013203, 3601.2428]], "lambert"],
+  // 100 km floor active; on it the optimum's time is less sharply determined, so TOF gets 5 s
+  [{ alt1: 300, apo1: 12500, alt2: 350, apo2: 8600, dw_deg: 90, di_deg: 0, tof_max_h: 1950 / 3600 }, [null, [2.546787403, 1629.7306]], "lambert", 5],
 ];
-for (const [x, refs, rec] of ell) {
+for (const [x, refs, rec, tolT = 1] of ell) {
   const m = { ...base, dw_deg: 0, ...x }, r = O.evaluate(m);
   const tag = `${m.alt1}x${m.apo1 ?? m.alt1} -> ${m.alt2}x${m.apo2 ?? m.alt2} km di=${m.di_deg} dw=${m.dw_deg}`;
   let ok = r.rec && r.rec.key === rec; fails += !ok;
@@ -81,13 +83,19 @@ for (const [x, refs, rec] of ell) {
       return;
     }
     const [dv, tof] = refs[i];
-    ok = Math.abs(o.dv - dv) < 1e-6 && Math.abs(o.tof - tof) < 1; fails += !ok;
+    ok = Math.abs(o.dv - dv) < 1e-6 && Math.abs(o.tof - tof) < tolT; fails += !ok;
     console.log(`[${ok ? "PASS" : "FAIL"}] ${tag}: ${o.key} dv ${o.dv.toFixed(9)} vs Python ${dv.toFixed(9)} ` +
                 `(${Math.abs(o.dv - dv).toExponential(1)} km/s), TOF ${o.tof.toFixed(4)} vs ${tof.toFixed(4)} s`);
     const sim = O.simulateVec(o.y0, o.plan, 3600, 20000);
     const [dh, de] = O.targetMismatch(sim.yf, r.r2, r.ra2, m.di_deg * Math.PI / 180, m.dw_deg * Math.PI / 180);
     ok = dh < 1e-6 && de < 1e-6 && Math.abs(sim.dvUsed - o.dv) < 1e-9; fails += !ok;
     console.log(`[${ok ? "PASS" : "FAIL"}] ${tag}: ${o.key} propagated (RK4) arrival |dh|/h = ${dh.toExponential(1)}, |de| = ${de.toExponential(1)}`);
+    if (o.key === "lambert") {                  // the arc must stay above the 100 km floor
+      const v1 = o.y0.slice(3).map((v, i) => v + o.plan[0][1][i]), r1 = o.y0.slice(0, 3);
+      const low = O.arcMinRadius(r1, v1, O.simulateVec([...r1, ...v1], [], o.plan[1][0], 20000).yf.slice(0, 3)) - O.RE;
+      ok = low >= O.H_ARC_MIN - 1e-6; fails += !ok;
+      console.log(`[${ok ? "PASS" : "FAIL"}] ${tag}: lambert arc lowest altitude ${low.toFixed(4)} km (floor ${O.H_ARC_MIN} km)`);
+    }
   });
 }
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");

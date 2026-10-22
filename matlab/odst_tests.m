@@ -88,10 +88,13 @@ check('Lambert optimum, coplanar 7000 -> 14000 km, vs Hohmann [m/s]', 1e3*lo.dv,
 ell = {odst_mission('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'di_deg', 28.5), ...
        odst_mission('alt1', 400, 'alt2', 600, 'apo2', 39700, 'dw_deg', 270, 'di_deg', 0), ...
        odst_mission('alt1', 500, 'apo1', 5000, 'alt2', 800, 'apo2', 12000, 'dw_deg', 60, 'di_deg', 0), ...
-       odst_mission('alt1', 500, 'apo1', 5000, 'alt2', 800, 'apo2', 12000, 'dw_deg', 60, 'di_deg', 10)};
-pyRef = {[1.833344084 0; 1.833344097 20504.3295], [2.476172306 21378.6762; 2.476173769 21646.7968], ...
-         [NaN NaN; 1.183670980 9359.7970], [NaN NaN; 1.859013203 3601.2405]};
-pyRec = {'apse', 'apse', 'lambert', 'lambert'};
+       odst_mission('alt1', 500, 'apo1', 5000, 'alt2', 800, 'apo2', 12000, 'dw_deg', 60, 'di_deg', 10), ...
+       odst_mission('alt1', 300, 'apo1', 12500, 'alt2', 350, 'apo2', 8600, 'dw_deg', 90, 'di_deg', 0, ...
+                    'tof_max_h', 1950/3600)};     % 100 km floor active
+pyRef = {[1.833344084 0; 1.833344097 20504.3564], [2.476172306 21378.6762; 2.476173769 21646.7968], ...
+         [NaN NaN; 1.183670980 9359.7970], [NaN NaN; 1.859013203 3601.2428], [NaN NaN; 2.546787403 1629.7306]};
+pyRec = {'apse', 'apse', 'lambert', 'lambert', 'lambert'};
+tolT = [1 1 1 1 5];      % s; on the 100 km floor the optimum's time is less sharply determined
 for c = 1:numel(ell)
     m = ell{c};
     [opts, rec] = odst_evaluate(m);
@@ -104,13 +107,18 @@ for c = 1:numel(ell)
             report(isnan(pyRef{c}(i, 1)), sprintf('%s: %s not applicable (%s)', mt, o.key, o.note));
             continue
         end
-        report(abs(o.dv - pyRef{c}(i, 1)) < 1e-6 && abs(o.tof - pyRef{c}(i, 2)) < 1, ...
+        report(abs(o.dv - pyRef{c}(i, 1)) < 1e-6 && abs(o.tof - pyRef{c}(i, 2)) < tolT(c), ...
                sprintf('%s: %-8s dv %.9f vs Python %.9f (%.1e km/s), TOF %.4f vs %.4f s', mt, o.key, ...
                        o.dv, pyRef{c}(i, 1), abs(o.dv - pyRef{c}(i, 1)), o.tof, pyRef{c}(i, 2)));
         [~, ~, yf, dvSim] = odst_simulate_vec(o.y0, o.vplan, 3600);
         [dh, de] = targetMismatch(yf, m);
         report(dh < 1e-6 && de < 1e-6 && abs(dvSim - o.dv) < 1e-9, ...
                sprintf('%s: %-8s propagated arrival |dh|/h = %.1e, |de| = %.1e', mt, o.key, dh, de));
+        if strcmp(o.key, 'lambert')            % the arc must stay above the 100 km floor
+            [~, ~, y2] = odst_simulate_vec([o.y0(1:3); o.y0(4:6) + o.vplan(1, 2:4).'], zeros(0, 4), o.vplan(2, 1));
+            low = odst_arc_min_radius(o.y0(1:3), o.y0(4:6) + o.vplan(1, 2:4).', y2(1:3)) - RE;
+            report(low >= 100 - 1e-6, sprintf('%s: lambert   arc lowest altitude %.4f km (floor 100 km)', mt, low));
+        end
     end
 end
 if nFail == 0

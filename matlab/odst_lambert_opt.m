@@ -4,8 +4,12 @@ function res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid)
 %   departure true anomaly, arrival true anomaly and transfer time (60 s to
 %   min(tofmax, the longer orbital period)): an nGrid x nGrid grid (default
 %   16) with a golden-section search on time per cell, then Nelder-Mead from
-%   the best cell. Transfers within 0.5 deg of 0 or 180 deg are skipped, as
-%   the transfer plane is undefined there. res = [] if nothing is found.
+%   the best cell, restarted once. Transfers within 0.5 deg of 0 or 180 deg
+%   are skipped, as the transfer plane is undefined there. The arc must stay
+%   above 100 km altitude; that floor is an exact penalty (0.01 km/s per km to
+%   search, 10 to polish), because a wall stops Nelder-Mead short of the
+%   boundary. A result still below the floor is rejected. res = [] if nothing
+%   is found.
 %   Same algorithm, step for step, as lambert_optimal() in python/odst.py,
 %   so the engines agree to rounding.
 if nargin < 8, nGrid = 16; end
@@ -16,7 +20,8 @@ tmax = min(tofmax, max(per(rp1, ra1), per(rp2, ra2)));
 res = [];
 if tmax <= tmin, return; end
 gap = sin(0.5*pi/180);
-cost = @(x) solve(x);
+kSearch = 0.01; kPolish = 10;                  % km/s per km below the 100 km floor
+cost = @(x) solve(x, kSearch);
 g = (sqrt(5) - 1)/2;
 fBest = Inf; xBest = [];
 for i = 0:nGrid - 1
@@ -45,16 +50,19 @@ for i = 0:nGrid - 1
 end
 if ~isfinite(fBest), return; end
 step = 2*pi/nGrid;
-[x, fx] = nelderMead(cost, xBest, [step/2, step/2, 0.05]);
-[~, r1v, v1v, r2v, dv1v, dv2v] = solve(x);
+x = nelderMead(cost, xBest, [step/2, step/2, 0.05]);
+x = nelderMead(cost, x, [step/4, step/4, 0.02]);               % restart: Nelder-Mead can stall
+x = nelderMead(@(y) solve(y, kPolish), x, [step/8, step/8, 0.01]);
+[~, r1v, v1v, r2v, dv1v, dv2v, fx, short] = solve(x, kPolish);
+if short > 1e-6, return; end
 T = tmin + x(3)*(tmax - tmin);
 res = struct('dv', fx, 'tof', T, 'burns', 2, 'y0', [r1v; v1v], 'plan', [0, dv1v.'; T, dv2v.'], ...
              'legs', [norm(r1v), norm(dv1v); norm(r2v), norm(dv2v)], ...
              'th1_deg', mod(x(1)*180/pi, 360), 'th2_deg', mod(x(2)*180/pi, 360), ...
              'time_limited', x(3) > 1 - 1e-6);
 
-    function [f, r1v, v1v, r2v, dv1v, dv2v] = solve(x)
-        f = Inf; r1v = []; v1v = []; r2v = []; dv1v = []; dv2v = [];
+    function [f, r1v, v1v, r2v, dv1v, dv2v, dv, short] = solve(x, K)
+        f = Inf; r1v = []; v1v = []; r2v = []; dv1v = []; dv2v = []; dv = Inf; short = Inf;
         if x(3) < 0 || x(3) > 1, return; end
         [r1v, v1v] = odst_orbit_state(rp1, ra1, 0, 0, x(1));
         [r2v, v2v] = odst_orbit_state(rp2, ra2, di, dw, x(2));
@@ -62,7 +70,9 @@ res = struct('dv', fx, 'tof', T, 'burns', 2, 'y0', [r1v; v1v], 'plan', [0, dv1v.
         [w1, w2] = odst_lambert(r1v, r2v, tmin + x(3)*(tmax - tmin));
         if isempty(w1), return; end
         dv1v = w1 - v1v; dv2v = v2v - w2;
-        f = norm(dv1v) + norm(dv2v);
+        dv = norm(dv1v) + norm(dv2v);
+        short = C.RE + 100 - odst_arc_min_radius(r1v, w1, r2v);   % km below the floor, if > 0
+        f = dv + K*max(0, short);
     end
 end
 
