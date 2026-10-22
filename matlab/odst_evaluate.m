@@ -31,14 +31,15 @@ else
 end
 
 opts = [c{:}];
-for i = 1:numel(opts)                                   % Tsiolkovsky
-    opts(i).prop_frac = 1 - exp(-opts(i).dv/(opts(i).isp*C.G0));
+for i = 1:numel(opts)
     if ~isempty(opts(i).plan)
         opts(i).legs = opts(i).plan(:, 4:5);
     end
     if ~isempty(opts(i).legs)
         opts(i).dv_loss = odst_gravity_loss(opts(i).legs, opts(i).isp, m.tw_chem);
     end
+    % Tsiolkovsky; the propellant also pays for the finite-burn loss, as the budget check does
+    opts(i).prop_frac = 1 - exp(-(opts(i).dv + opts(i).dv_loss)/(opts(i).isp*C.G0));
 end
 opts = applyRules(m, opts);
 opts = scoreOptions(m, opts);
@@ -156,8 +157,13 @@ end
 
 % --- 5. Low-thrust spiral (Edelbaum) --------------------------------------
 [dv, tof] = odst_lowthrust(r1, r2, di, m.accel_ep);
-c{end+1} = newOpt('low_thrust', 'Low-thrust spiral (Edelbaum)', dv, tof, 0, m.isp_ep, ...
-                  C.CPLX.low_thrust, zeros(0, 3), struct());
+o = newOpt('low_thrust', 'Low-thrust spiral (Edelbaum)', dv, tof, 0, m.isp_ep, ...
+           C.CPLX.low_thrust, zeros(0, 3), struct());
+if di > 2          % rad, 114.6 deg: Edelbaum's yaw angle sweeps pi/2*di, which must not exceed pi
+    o.applicable = false;
+    o.note = 'Edelbaum''s closed form holds only up to di = 114.6 deg';
+end
+c{end+1} = o;
 end
 
 % plan: circular-model burn plan (odst_simulate); y0 + vplan: vector burn plan
@@ -244,14 +250,15 @@ function adv = ruleAdvice(m, r1, r2, di)
 R = max(r1, r2)/min(r1, r2);
 adv = {};
 if R < 11.94
-    adv{end+1} = sprintf('R = %.2f < 11.94: Hohmann is the minimum-dv two/three-impulse transfer.', R);
+    adv{end+1} = sprintf('R = %.2f < 11.94: without a plane change, Hohmann beats every bi-elliptic transfer.', R);
 elseif R < 15.58
-    adv{end+1} = sprintf('11.94 <= R = %.2f < 15.58: bi-elliptic wins only if rB is large enough.', R);
+    adv{end+1} = sprintf('11.94 <= R = %.2f < 15.58: without a plane change, bi-elliptic wins only if rB is large enough.', R);
 else
-    adv{end+1} = sprintf('R = %.2f >= 15.58: bi-elliptic beats Hohmann for any rB > r2.', R);
+    adv{end+1} = sprintf('R = %.2f >= 15.58: without a plane change, bi-elliptic beats Hohmann for any rB > r2.', R);
 end
 if m.di_deg > 0
-    adv{end+1} = 'Plane change: perform it where speed is lowest (largest radius) or combine with a burn.';
+    adv{end+1} = ['Plane change: perform it where speed is lowest (largest radius) or combine with a burn. ' ...
+                  'That can make bi-elliptic the cheapest at any R.'];
 end
 if R < 1 + 1e-9 && m.di_deg > 48.94
     adv{end+1} = 'di > 48.94 deg: a three-impulse (bi-elliptic) plane change beats a single burn.';
@@ -261,7 +268,7 @@ if m.tof_max_h < tofH/3600
     adv{end+1} = sprintf(['TOF limit %.2f h < Hohmann %.2f h: a fast (one-tangent) ' ...
                           'transfer is required.'], m.tof_max_h, tofH/3600);
 end
-if ~strcmp(m.propulsion, 'chemical')
+if ~strcmp(m.propulsion, 'chemical') && di <= 2       % Edelbaum's limit, 114.6 deg
     adv{end+1} = 'Electric propulsion available: low-thrust spiral minimises propellant if time allows.';
 end
 end

@@ -7,7 +7,7 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
 from odst import (G0, MU, RE, Mission, apse_transfer, bielliptic, evaluate, gravity_loss, hohmann,
-                  hohmann_optimal_split, lambert, lambert_optimal, one_tangent, orbit_elements,
+                  hohmann_optimal_split, lambert, lambert_optimal, low_thrust, one_tangent, orbit_elements,
                   print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -95,6 +95,25 @@ for tw in (0.5, 0.2):
     tau = brentq(lambda t: finite_apoapsis(r1, t, tw, isp) - r2, tau0, 1.3 * tau0, xtol=1e-6)
     num = -isp * G0 * math.log(1 - tw / isp * tau) - dv1
     check(f"LEO->GEO first burn loss, T/W {tw} [m/s] (Robbins vs numerical)", 1e3 * est, 1e3 * num, 0.1 * 1e3 * num)
+o = next(o for o in evaluate(Mission(tw_chem=0.2)) if o.key == "hohmann")
+check("Propellant fraction includes the gravity loss (Hohmann LEO->GEO, T/W 0.2)", o.prop_frac,
+      1 - math.exp(-(o.dv + o.dv_loss) / (o.isp * G0)), 1e-12)
+
+print("\n=== 4b. Edelbaum low thrust vs the averaged equations, integrated with Edelbaum's yaw law ===")
+for r1, r2, di_deg in ((RE + 400, 42164.0, 28.5), (42164.0, RE + 400, 10.0), (7000.0, 7000.0, 30.0)):
+    f, di = 1e-6, math.radians(di_deg)                    # 1e-6 km/s^2 = 1 mm/s^2
+    dv, tof = low_thrust(r1, r2, di, f * 1e3)
+    V0, V1 = vcirc(r1), vcirc(r2)
+    b0 = math.atan2(math.sin(math.pi / 2 * di), V0 / V1 - math.cos(math.pi / 2 * di))
+    beta = lambda t: math.atan2(V0 * math.sin(b0), V0 * math.cos(b0) - f * t)
+    end = solve_ivp(lambda t, y: [-f * math.cos(beta(t)), 2 / math.pi * f * math.sin(beta(t)) / y[0]], (0, tof),
+                    [V0, 0.0], rtol=1e-11, atol=1e-13).y[:, -1]
+    check(f"Edelbaum {r1:.0f} -> {r2:.0f} km, di {di_deg}: speed after the closed-form TOF [km/s]", end[0], V1, 1e-8)
+    check(f"Edelbaum {r1:.0f} -> {r2:.0f} km, di {di_deg}: plane change after the closed-form TOF [deg]", math.degrees(end[1]), di_deg, 1e-6)
+lt = next(o for o in evaluate(Mission(di_deg=120)) if o.key == "low_thrust")
+ok = not lt.applicable
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Edelbaum not offered beyond 114.6 deg (di 120): applicable = {lt.applicable} ({lt.note})")
 
 print("\n=== 5. Elliptical orbits and Lambert ===")
 # Curtis, Orbital Mechanics for Engineering Students, Example 5.2

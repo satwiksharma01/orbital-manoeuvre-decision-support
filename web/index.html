@@ -714,8 +714,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (ell) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax); else circularOptions(m, add, r1, r2, di, tofmax);
 
     for (const o of opts) {
-      o.prop_frac = 1 - Math.exp(-o.dv / (o.isp * G0));
       o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
+      o.prop_frac = 1 - Math.exp(-(o.dv + o.dv_loss) / (o.isp * G0));   // the propellant also pays for the loss
       o.reasons = []; o.feasible = o.applicable;
       if (!o.applicable) { o.reasons.push(o.note); continue; }
       const mg = m.margin_pct ?? 5, need = (o.dv + o.dv_loss) * (1 + mg / 100);
@@ -776,7 +776,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       add("one_tangent", "One-tangent burn (fast)", ot, m.isp_chem, { note, params: { k, e: ot.e, fpa_deg: ot.phi * 180 / Math.PI } });
     }
 
-    add("low_thrust", "Low-thrust spiral (Edelbaum)", lowThrust(r1, r2, di, m.accel_ep), m.isp_ep);
+    const lt = add("low_thrust", "Low-thrust spiral (Edelbaum)", lowThrust(r1, r2, di, m.accel_ep), m.isp_ep);
+    // Edelbaum's yaw angle sweeps pi/2 * di, which must not exceed pi: valid up to 2 rad (114.6 deg)
+    if (di > 2) { lt.applicable = false; lt.note = "Edelbaum's closed form holds only up to Δi = 114.6°"; }
   }
 
   function score(m, opts) {
@@ -800,14 +802,14 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
   function advice(m, r1, r2, di) {
     const R = Math.max(r1, r2) / Math.min(r1, r2), out = [];
-    if (R < 11.94) out.push(`R = ${R.toFixed(2)} < 11.94, so Hohmann is the minimum-Δv two/three-impulse transfer.`);
-    else if (R < 15.58) out.push(`11.94 ≤ R = ${R.toFixed(2)} < 15.58, so bi-elliptic wins only if rB is large enough.`);
-    else out.push(`R = ${R.toFixed(2)} ≥ 15.58, so bi-elliptic beats Hohmann for any rB > r2.`);
-    if (m.di_deg > 0) out.push("Do the plane change where the speed is lowest (largest radius), combined with a burn.");
+    if (R < 11.94) out.push(`R = ${R.toFixed(2)} < 11.94, so without a plane change Hohmann beats every bi-elliptic transfer.`);
+    else if (R < 15.58) out.push(`11.94 ≤ R = ${R.toFixed(2)} < 15.58, so without a plane change bi-elliptic wins only if rB is large enough.`);
+    else out.push(`R = ${R.toFixed(2)} ≥ 15.58, so without a plane change bi-elliptic beats Hohmann for any rB > r2.`);
+    if (m.di_deg > 0) out.push("Do the plane change where the speed is lowest (largest radius), combined with a burn. That can make bi-elliptic the cheapest at any R.");
     if (R < 1 + 1e-9 && m.di_deg > 48.94) out.push("Δi > 48.94°: a three-impulse (bi-elliptic) plane change beats a single burn.");
     const tofH = hohmann(r1, r2, di).tof / 3600;
     if (m.tof_max_h < tofH) out.push(`TOF limit ${(+m.tof_max_h).toFixed(2)} h < Hohmann ${tofH.toFixed(2)} h, so a fast (one-tangent) transfer is required.`);
-    if (m.propulsion !== "chemical") out.push("Electric propulsion is on board: a low-thrust spiral minimises propellant if time allows.");
+    if (m.propulsion !== "chemical" && di <= 2) out.push("Electric propulsion is on board: a low-thrust spiral minimises propellant if time allows.");
     return out;
   }
 

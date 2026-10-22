@@ -37,11 +37,20 @@ for (const [tw, ref] of [[0.5, 14.95], [0.1, 373.81]]) {   // python/odst.py, Ho
   const ok = Math.abs(loss - ref) < 0.1; fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] Hohmann gravity loss at T/W ${tw}: ${loss.toFixed(2)} m/s (ref ${ref})`);
 }
-// ---- elliptical orbits and Lambert: the checks of python/validate.py section 5
 const check = (name, got, ref, tol) => {
   const ok = Math.abs(got - ref) <= tol; fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] ${name}: got ${got.toFixed(5)}, ref ${ref.toFixed(5)} (tol ${tol})`);
 };
+{
+  const h = O.evaluate({ ...base, tw_chem: 0.2 }).opts.find((o) => o.key === "hohmann");
+  check("Propellant fraction includes the gravity loss (Hohmann, T/W 0.2)", h.prop_frac, 1 - Math.exp(-(h.dv + h.dv_loss) / (h.isp * O.G0)), 1e-12);
+  check("Same propellant fraction as python/odst.py (Hohmann, T/W 0.2)", h.prop_frac, 0.74717, 1e-5);
+  const lt = O.evaluate({ ...base, di_deg: 120 }).opts.find((o) => o.key === "low_thrust");
+  fails += lt.applicable;
+  console.log(`[${lt.applicable ? "FAIL" : "PASS"}] Edelbaum not offered beyond 114.6 deg (di 120): applicable = ${lt.applicable} (${lt.note})`);
+}
+
+// ---- elliptical orbits and Lambert: the checks of python/validate.py section 5
 const r1v = [5000, 10000, 2100], r2v = [-14600, 2500, 7000];   // Curtis, Example 5.2
 const [v1, v2] = O.lambert(r1v, r2v, 3600);
 [-5.9925, 1.9254, 3.2456, -3.3125, -4.1966, -0.38529].forEach((ref, k) =>

@@ -233,8 +233,12 @@ def one_tangent_for_tof(r1, r2, di, tof_target, kmax=50.0):
     return brentq(f, 1.0 + 1e-9, kmax, xtol=1e-10)
 
 
+EDELBAUM_MAX_DI = 2.0   # rad (114.59 deg): the yaw angle sweeps pi/2 * di, which must not exceed pi
+
+
 def low_thrust(r1, r2, di, accel_ms2):
-    """Edelbaum continuous low-thrust transfer between circular orbits."""
+    """Edelbaum continuous low-thrust transfer between circular orbits, valid for di <= 2 rad.
+    Beyond that the closed form's dv falls as di grows and its yaw law misses the target plane."""
     v1, v2 = vcirc(r1), vcirc(r2)
     dv = math.sqrt(max(v1 ** 2 + v2 ** 2 - 2 * v1 * v2 * math.cos(math.pi / 2 * di), 0))
     tof = dv / (accel_ms2 * 1e-3)
@@ -493,11 +497,12 @@ def gravity_loss(legs, isp, tw):
 def evaluate(m: Mission):
     opts = _elliptical_options(m) if m.elliptical else _circular_options(m)
     for o in opts:
-        o.prop_frac = 1.0 - math.exp(-o.dv / (o.isp * G0))
         if o.burn_plan:
             o.legs = [(b[3], b[4]) for b in o.burn_plan]
         if o.legs:
             o.dv_loss = gravity_loss(o.legs, o.isp, m.tw_chem)
+        # the propellant also pays for the finite-burn loss, as the budget check does
+        o.prop_frac = 1.0 - math.exp(-(o.dv + o.dv_loss) / (o.isp * G0))
     apply_rules(m, opts)
     score(m, opts)
     return opts
@@ -575,8 +580,10 @@ def _circular_options(m: Mission):
                            COMPLEXITY["one_tangent"], burn_plan=plan, params=extra, note=note))
 
     dv, tof = low_thrust(r1, r2, di, m.accel_ep)
-    opts.append(Option("low_thrust", "Low-thrust spiral (Edelbaum)", dv, tof, 0, m.isp_ep,
-                       COMPLEXITY["low_thrust"]))
+    o = Option("low_thrust", "Low-thrust spiral (Edelbaum)", dv, tof, 0, m.isp_ep, COMPLEXITY["low_thrust"])
+    if di > EDELBAUM_MAX_DI:
+        o.applicable, o.note = False, "Edelbaum's closed form holds only up to Δi = 114.6°"
+    opts.append(o)
     return opts
 
 
@@ -618,19 +625,20 @@ def rule_advice(m: Mission):
     R = max(r1, r2) / min(r1, r2)
     adv = []
     if R < 11.94:
-        adv.append(f"R = {R:.2f} < 11.94: Hohmann is the minimum-Δv two/three-impulse transfer.")
+        adv.append(f"R = {R:.2f} < 11.94: without a plane change, Hohmann beats every bi-elliptic transfer.")
     elif R < 15.58:
-        adv.append(f"11.94 ≤ R = {R:.2f} < 15.58: bi-elliptic wins only if rB is large enough.")
+        adv.append(f"11.94 ≤ R = {R:.2f} < 15.58: without a plane change, bi-elliptic wins only if rB is large enough.")
     else:
-        adv.append(f"R = {R:.2f} ≥ 15.58: bi-elliptic beats Hohmann for any rB > r2.")
+        adv.append(f"R = {R:.2f} ≥ 15.58: without a plane change, bi-elliptic beats Hohmann for any rB > r2.")
     if m.di_deg > 0:
-        adv.append("Plane change: perform it where speed is lowest (largest radius) or combine with a burn.")
+        adv.append("Plane change: perform it where speed is lowest (largest radius) or combine with a burn. "
+                   "That can make bi-elliptic the cheapest at any R.")
     if R < 1.0 + 1e-9 and m.di_deg > 48.94:
         adv.append("Δi > 48.94°: a three-impulse (bi-elliptic) plane change beats a single burn.")
     tof_h = hohmann(r1, r2, math.radians(m.di_deg))[1] / 3600
     if m.tof_max_h < tof_h:
         adv.append(f"TOF limit {m.tof_max_h:.2f} h < Hohmann {tof_h:.2f} h: a fast (one-tangent) transfer is required.")
-    if m.propulsion != "chemical":
+    if m.propulsion != "chemical" and math.radians(m.di_deg) <= EDELBAUM_MAX_DI:
         adv.append("Electric propulsion available: low-thrust spiral minimises propellant if time allows.")
     return adv
 

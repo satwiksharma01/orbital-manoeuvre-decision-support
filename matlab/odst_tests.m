@@ -52,6 +52,21 @@ r1 = RE + 400; at = (r1 + 42164)/2;
 dv1 = sqrt(C.MU*(2/r1 - 1/at)) - sqrt(C.MU/r1);
 check('LEO->GEO first burn loss, T/W 0.5 [m/s]', 1e3*odst_gravity_loss([r1 dv1], 320, 0.5), 14.94524, 1e-3);
 check('LEO->GEO first burn loss, T/W 0.2 [m/s]', 1e3*odst_gravity_loss([r1 dv1], 320, 0.2), 93.40775, 1e-3);
+opts = odst_evaluate(odst_mission('tw_chem', 0.2)); o = opts(strcmp({opts.key}, 'hohmann'));
+check('Propellant fraction includes the gravity loss (Hohmann, T/W 0.2)', o.prop_frac, ...
+      1 - exp(-(o.dv + o.dv_loss)/(o.isp*C.G0)), 1e-12);
+
+fprintf('\n=== 4b. Edelbaum vs the averaged equations, integrated with Edelbaum''s yaw law ===\n');
+f = 1e-6; r1 = RE + 400; r2 = 42164; di = 28.5*pi/180;         % 1e-6 km/s^2 = 1 mm/s^2
+[~, tof] = odst_lowthrust(r1, r2, di, f*1e3);
+V0 = sqrt(C.MU/r1); V1 = sqrt(C.MU/r2);
+b0 = atan2(sin(pi/2*di), V0/V1 - cos(pi/2*di));
+beta = @(t) atan2(V0*sin(b0), V0*cos(b0) - f*t);
+[~, yy] = ode45(@(t, y) [-f*cos(beta(t)); 2/pi*f*sin(beta(t))/y(1)], [0 tof], [V0; 0], odeset('RelTol', 1e-11, 'AbsTol', 1e-13));
+check('Edelbaum LEO -> GEO, di 28.5: speed after the closed-form TOF [km/s]', yy(end, 1), V1, 1e-8);
+check('Edelbaum LEO -> GEO, di 28.5: plane change after the closed-form TOF [deg]', yy(end, 2)*180/pi, 28.5, 1e-6);
+opts = odst_evaluate(odst_mission('di_deg', 120)); lt = opts(strcmp({opts.key}, 'low_thrust'));
+report(~lt.applicable, sprintf('Edelbaum not offered beyond 114.6 deg (di 120): applicable = %d (%s)', lt.applicable, lt.note));
 
 fprintf('\n=== 5. Elliptical orbits and Lambert ===\n');
 % Curtis, Orbital Mechanics for Engineering Students, Example 5.2
