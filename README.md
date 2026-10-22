@@ -14,7 +14,7 @@ Given an initial and a target orbit (circular, or elliptical with a periapsis an
 
 1. **Models the candidates.** Between circular orbits: Hohmann, Hohmann with an optimised plane-change split, bi-elliptic, one-tangent burn and an Edelbaum low-thrust spiral. When either orbit is elliptical: an apse-to-apse transfer with an optimised plane-change split, and the minimum-Δv two-burn Lambert transfer.
 2. **Optimises each one:** the plane-change split (`fminbnd`), the bi-elliptic apoapsis under a time limit (grid search + `fminbnd` + `fzero`), the cheapest fast transfer that meets a deadline (`fzero`), and the Lambert transfer over departure point, arrival point and flight time (a universal-variable Lambert solver inside a grid search, golden section and Nelder–Mead).
-3. **Applies rules:** hard constraints (Δv plus a finite-burn gravity-loss estimate and a margin, default 5 %, time, propulsion) plus textbook rules such as the 11.94 / 15.58 Hohmann vs bi-elliptic thresholds.
+3. **Applies rules:** hard constraints (Δv plus a finite-burn gravity-loss estimate and a margin, default 5 %, time, propulsion) plus textbook rules such as the 11.94 / 15.58 Hohmann vs bi-elliptic thresholds for coplanar transfers. The propellant fraction includes the gravity loss.
 4. **Ranks the survivors:** weighted-sum scoring cross-checked with TOPSIS, with presets for balanced, propellant-critical, time-critical and low-complexity missions.
 
 ## Results
@@ -42,6 +42,12 @@ Given an initial and a target orbit (circular, or elliptical with a periapsis an
   - Python, MATLAB and the web engine run the same algorithms and agree on four elliptical test missions: Δv to 5 × 10⁻¹⁰ km/s and the same recommendation.
   - Every elliptical burn plan, propagated, arrives on its target orbit with angular-momentum and eccentricity-vector errors around 10⁻¹¹.
   - In GMAT, the differential corrector solves the GTO → GEO apogee burn itself (1.83334 km/s, within 0.05 mm/s of the tool). GMAT also flies all six elliptical burn plans, including a 3D Lambert transfer, and every arrival matches the target orbit to 3 × 10⁻⁹. That residual is GMAT's slightly different Earth μ.
+- **Independent audit (2026-10-22)**, with methods unlike the engines' own:
+  - The Lambert solver matches a shooting solution (numerical propagation plus root-finding) on 60 random 3D transfers, short and long way, elliptic and hyperbolic, to 2 × 10⁻¹⁰ km/s.
+  - The Lambert optimiser reaches the global minimum found by differential evolution on eight missions; on the hardest it beats it by 4 m/s. Transfers in the opposite direction, searched separately for plane changes up to 170°, are never cheaper.
+  - Edelbaum's closed form matches its averaged equations integrated numerically with Edelbaum's yaw law: speed to 10⁻⁸ km/s, plane change to 10⁻⁶° (now a permanent test).
+  - The gravity-loss estimate stays within 3 % of a numerical finite burn at the perigee of eccentric orbits, not only from circular ones.
+  - 271 random missions give the same options, feasibility and recommendation in all three engines; Δv differs by at most 4 × 10⁻⁸ km/s.
 
 | MATLAB GUI | Simulink model |
 |---|---|
@@ -65,7 +71,7 @@ This is an early trade-study and teaching tool: it tells you which family of tra
 | Two-body gravity | J2 (2.4 m/s on LEO → GEO in GMAT, but RAAN drifts by degrees a day in LEO, which matters for long spirals) and drag below about 500 km |
 | Burns are impulsive, with a gravity-loss estimate | The loss uses Robbins' approximation from the thrust-to-weight input (default 0.5). It matches a fixed-attitude finite burn within 5 % for T/W ≥ 0.2, overestimates a velocity-tracking burn about 2×, and underestimates below T/W ≈ 0.1 |
 | Burn timing is ignored | Phasing, rendezvous and launch windows |
-| Low thrust is Edelbaum at constant acceleration | Power limits, eclipses and acceleration rising as propellant is used |
+| Low thrust is Edelbaum at constant acceleration | Power limits, eclipses and acceleration rising as propellant is used. The closed form holds only up to Δi = 114.6° (2 rad), so low thrust isn't offered for larger plane changes |
 | A fixed Δv margin (default 5 %) | Uncertainty in Isp, thrust and pointing |
 | Weights are chosen by the user | Only the time weight is swept; other weights can flip the ranking |
 
