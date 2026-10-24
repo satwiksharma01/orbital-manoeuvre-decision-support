@@ -108,3 +108,4 @@ python python/gmat_crosscheck.py # cross-check against a local NASA GMAT install
 | `web/` | Self-contained web planner and its engine test |
 | `gmat/` | GMAT script for the cross-check, filled in and run by `python/gmat_crosscheck.py` |
 | `assets/` | Screenshots and result figures used in this README |
+| `tools/` | `record_demo_gif.py`: re-records `assets/demo.gif` from the web planner (Selenium + Edge) |
