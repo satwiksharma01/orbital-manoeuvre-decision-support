@@ -4,7 +4,7 @@
 
 **Which manoeuvre should a mission fly?** A decision-support tool that sizes the candidate orbital transfers, optimises each one numerically, removes those that break the mission's constraints and ranks the rest by the mission's priorities. Five transfers between circular orbits; apse-to-apse and Lambert transfers when either orbit is elliptical. Built in MATLAB and Simulink, cross-checked in Python and NASA GMAT, with an interactive web planner.
 
-![Web planner demo: picking example missions re-ranks the manoeuvres and draws each transfer](assets/demo.gif)
+![Web planner demo: picking example missions, circular and elliptical (GTO → GEO, LEO → Molniya), re-ranks the manoeuvres and draws each transfer](assets/demo.gif)
 
 **[Try the live demo](https://satwiksharma01.github.io/orbital-manoeuvre-decision-support/web/)**
 
@@ -52,7 +52,7 @@ Given an initial and a target orbit (circular, or elliptical with a periapsis an
 
 | MATLAB GUI | Simulink model |
 |---|---|
-| ![MATLAB app](assets/matlab_app.png) | ![Simulink model](assets/simulink_model.png) |
+| ![MATLAB app: LEO to a Molniya-sized elliptical orbit](assets/matlab_app.png) | ![Simulink model](assets/simulink_model.png) |
 
 ![Case A results](assets/case_A_bars.png)
 ![Decision map](assets/decision_map.png)
