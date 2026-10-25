@@ -4,12 +4,14 @@ Orbital Manoeuvre Decision Support Tool (ODST) - Python reference implementation
 Mirrors the MATLAB implementation in ../matlab exactly. It is used to
   * validate the analytical models against textbook values,
   * verify every manoeuvre's burn plan by numerical propagation (two-body, impulsive),
-  * generate the figures used in the report.
+  * generate the figures used in the report,
+  * export a transfer's burn plan as a NASA GMAT script and as JSON.
 
 Units: km, s, km/s, deg (inputs), rad (internal).
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 
@@ -95,7 +97,7 @@ class Option:
     applicable: bool = True
     note: str = ""
     burn_plan: list = field(default_factory=list)  # [(t, v_after, d_inc_rad, r_burn, dv_burn)]
-    vec_plan: list = field(default_factory=list)   # elliptical models: [(t, dv_vec)] from state y0
+    vec_plan: list = field(default_factory=list)   # every impulsive option: [(t, dv_vec)] from state y0
     y0: object = None
     legs: list = field(default_factory=list)       # [(r_burn, dv_burn)] for the gravity loss
     params: dict = field(default_factory=dict)
@@ -526,6 +528,7 @@ def evaluate(m: Mission):
     for o in opts:
         if o.burn_plan:
             o.legs = [(b[3], b[4]) for b in o.burn_plan]
+            o.y0, o.vec_plan = circular_vec_plan(m.r1, o.burn_plan)
         if o.legs:
             o.dv_loss = gravity_loss(o.legs, o.isp, m.tw_chem)
         # the propellant also pays for the finite-burn loss, as the budget check does
@@ -719,6 +722,54 @@ def _rotate(v, axis, ang):
     return v * math.cos(ang) + np.cross(k, v) * math.sin(ang) + k * np.dot(k, v) * (1 - math.cos(ang))
 
 
+def _circular_burn(r, v, vafter, dinc):
+    """Velocity after a circular-model burn: speed vafter perpendicular to r, plane turned by
+    dinc about r in the sense that increases inclination w.r.t. the initial plane (keeps split
+    plane changes additive)."""
+    h = np.cross(r, v)
+    nh = h / np.linalg.norm(h)
+    n_new = min([_rotate(nh, r, dinc), _rotate(nh, r, -dinc)], key=lambda n: n[2])
+    return vafter * np.cross(n_new, r / np.linalg.norm(r))
+
+
+def kepler(y, dt):
+    """Two-body state dt seconds after state y: the universal-variable Kepler equation solved
+    by Newton, then Lagrange f and g (Curtis, Algorithms 3.3 and 3.4)."""
+    r0v, v0v = np.asarray(y[:3], float), np.asarray(y[3:], float)
+    r0, sq = np.linalg.norm(r0v), math.sqrt(MU)
+    vr0, alpha = np.dot(r0v, v0v) / r0, 2 / r0 - np.dot(v0v, v0v) / MU
+    x = sq * abs(alpha) * dt
+    for _ in range(100):
+        z = alpha * x * x
+        C, S = stumpff(z)
+        F = r0 * vr0 / sq * x * x * C + (1 - alpha * r0) * x ** 3 * S + r0 * x - sq * dt
+        dx = F / (r0 * vr0 / sq * x * (1 - z * S) + (1 - alpha * r0) * x * x * C + r0)
+        x -= dx
+        if abs(dx) < 1e-12 * max(1.0, abs(x)):
+            break
+    else:
+        raise RuntimeError("kepler: Newton did not converge")
+    z = alpha * x * x
+    C, S = stumpff(z)
+    rv = (1 - x * x / r0 * C) * r0v + (dt - x ** 3 * S / sq) * v0v
+    r = np.linalg.norm(rv)
+    return np.concatenate([rv, sq / (r * r0) * x * (z * S - 1) * r0v + (1 - x * x / r * C) * v0v])
+
+
+def circular_vec_plan(r1, plan):
+    """A circular model's burn plan as (y0, [(t, dv_vec)]): the burns of simulate(), with the
+    coasts solved analytically (kepler) instead of integrated, so the plan is exact."""
+    y = np.array([r1, 0, 0, 0, vcirc(r1), 0.0])
+    y0, t0, out = y.copy(), 0.0, []
+    for tb, vafter, dinc, *_ in plan:
+        if tb > t0:
+            y = kepler(y, tb - t0)
+        vnew = _circular_burn(y[:3], y[3:], vafter, dinc)
+        out.append((tb, vnew - y[3:]))
+        y, t0 = np.concatenate([y[:3], vnew]), tb
+    return y0, out
+
+
 def simulate(r1, plan, coast_after=0.0, n_out=2000):
     """Propagate an impulsive burn plan from a circular equatorial orbit at r1.
     Every burn in the ODST plans leaves velocity perpendicular to r (apsis or
@@ -733,13 +784,7 @@ def simulate(r1, plan, coast_after=0.0, n_out=2000):
             ts.append(tt); ys.append(sol.sol(tt).T)
             y = sol.y[:, -1].copy()
         r, v = y[:3], y[3:]
-        h = np.cross(r, v)
-        # rotate about the node line in the sense that increases inclination
-        # w.r.t. the initial plane (keeps split plane changes additive)
-        nh = h / np.linalg.norm(h)
-        cands = [_rotate(nh, r, dinc), _rotate(nh, r, -dinc)]
-        n_new = min(cands, key=lambda n: n[2])
-        vnew = vafter * np.cross(n_new, r / np.linalg.norm(r))
+        vnew = _circular_burn(r, v, vafter, dinc)
         dv_used += np.linalg.norm(vnew - v)
         y = np.concatenate([r, vnew])
         t0 = tb
@@ -788,6 +833,69 @@ def orbit_elements(y):
     a = 1.0 / (2 / np.linalg.norm(r) - np.dot(v, v) / MU)
     inc = math.degrees(math.acos(h[2] / np.linalg.norm(h)))
     return a, np.linalg.norm(ev), inc
+
+
+# ------------------------------------------------------------------- export
+GMAT_EPOCH = "01 Jan 2026 12:00:00.000"   # UTC; arbitrary, as the tool has no timing model yet
+FRAME = "EarthMJ2000Eq, start orbit in the X-Y plane with its periapsis on +X"
+
+
+def _num(x):
+    return float(x) + 0.0               # plain float; + 0.0 turns -0.0 into 0.0
+
+
+def _alts(m):
+    return (m.alt1, m.alt1 if m.apo1 is None else m.apo1), (m.alt2, m.alt2 if m.apo2 is None else m.apo2)
+
+
+def gmat_script(m: Mission, o: Option, report="odst_arrival.txt"):
+    """NASA GMAT script that flies option o's impulsive burn plan from the tool's start state
+    and reports the orbit it arrives on (same physics as the tool: point-mass Earth)."""
+    g = lambda x: repr(_num(x))
+    (p1, a1), (p2, a2) = _alts(m)
+    s = ["% Orbital Manoeuvre Decision Support Tool: GMAT export",
+         f"% Transfer: {o.name.replace('Δ', 'd')}, {len(o.vec_plan)} burn(s), total dv {o.dv:.4f} km/s "
+         f"(impulsive), flight time {o.tof / 3600:.2f} h",
+         f"% Start orbit {p1:g} x {a1:g} km altitude; target {p2:g} x {a2:g} km, di {m.di_deg:g} deg, dw {m.dw_deg:g} deg",
+         f"% Frame: {FRAME}, as in the tool.",
+         "%   The epoch is arbitrary: the tool has no timing model yet.",
+         "% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
+         "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies.",
+         "", "% GMAT's default is 398600.4415, enough to shift a 10-day transfer's arrival by 0.2 km",
+         f"Earth.Mu = {MU!r};", "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", f"Sat.Epoch = '{GMAT_EPOCH}';",
+         "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;"]
+    s += [f"Sat.{k} = {g(x)};" for k, x in zip(("X", "Y", "Z", "VX", "VY", "VZ"), o.y0)]
+    s += ["", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
+          "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
+          "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"]
+    for k, (_, dv) in enumerate(o.vec_plan, 1):
+        s += ["", f"Create ImpulsiveBurn Burn{k};", f"Burn{k}.CoordinateSystem = EarthMJ2000Eq;"]
+        s += [f"Burn{k}.Element{j + 1} = {g(dv[j])};" for j in range(3)]
+    s += ["", "Create ReportFile Arrival;", f"Arrival.Filename = '{report}';", "Arrival.Precision = 16;",
+          "Arrival.WriteHeaders = true;", "", "Create OrbitView View;", "View.Add = {Sat, Earth};",
+          "", "BeginMissionSequence;"]
+    t = 0.0
+    for k, (tb, _) in enumerate(o.vec_plan, 1):
+        if tb > t:
+            s.append(f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {g(tb - t)}}};")
+        s.append(f"Maneuver Burn{k}(Sat);")
+        t = tb
+    s += ["Report Arrival " + " ".join(f"Sat.EarthMJ2000Eq.{k}" for k in ("X", "Y", "Z", "VX", "VY", "VZ"))
+          + " Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;",
+          f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {g(2 * math.pi * math.sqrt(((m.r2 + m.ra2) / 2) ** 3 / MU))}}};"]
+    return "\n".join(s) + "\n"
+
+
+def burns_json(m: Mission, o: Option):
+    """Option o's burn plan as JSON: the start state, then each burn's time and inertial dv."""
+    (p1, a1), (p2, a2) = _alts(m)
+    return json.dumps({
+        "tool": "Orbital Manoeuvre Decision Support Tool", "transfer": o.name, "dv_kms": o.dv, "tof_s": o.tof,
+        "start_orbit_alt_km": [p1, a1], "target_orbit_alt_km": [p2, a2], "di_deg": m.di_deg, "dw_deg": m.dw_deg,
+        "frame": FRAME, "epoch_utc": GMAT_EPOCH, "mu_km3_s2": MU,
+        "start_state_km_kms": [_num(x) for x in o.y0],
+        "burns": [{"t_s": _num(t), "dv_kms": [_num(x) for x in dv], "dv_mag_kms": _num(np.linalg.norm(dv))}
+                  for t, dv in o.vec_plan]}, indent=2, ensure_ascii=False) + "\n"
 
 
 # ------------------------------------------------------------------- report

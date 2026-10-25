@@ -2,8 +2,8 @@
 
 1. GMAT's differential corrector solves the same Hohmann transfers that odst.py sizes
    analytically, and the GTO -> GEO apogee burn of the apse-to-apse model.
-2. GMAT flies every elliptical-mission burn plan (apse-to-apse and Lambert) from its
-   start state, and the orbit it arrives on is compared with the target orbit.
+2. GMAT runs the scripts the tool exports (odst.gmat_script) for every impulsive option of
+   circular and elliptical missions, and the orbit it arrives on is compared with the target.
 
 Needs a local GMAT (https://sourceforge.net/projects/gmat/). Not run in CI.
 Run: python python/gmat_crosscheck.py [path/to/GmatConsole.exe]
@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from string import Template
 
-from odst import MU, RE, Mission, evaluate, hohmann, target_mismatch, vcirc, vvis
+from odst import RE, Mission, evaluate, gmat_script, hohmann, target_mismatch, vcirc, vvis
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = Path(__file__).resolve().parent
@@ -27,6 +27,11 @@ POINT_MASS = "FM.PointMasses = {Earth};"
 J2 = ("FM.PrimaryBodies = {Earth};\nFM.GravityField.Earth.Degree = 2;\n"
       "FM.GravityField.Earth.Order = 0;\nFM.GravityField.Earth.PotentialFile = 'JGM2.cof';")
 INC1 = 30.0   # start inclination; target is INC1 - di (see the scripts' headers)
+CIRCULAR = [Mission(),                                                                   # case A: LEO -> GEO
+            Mission(alt1=7000 - RE, alt2=105000 - RE, di_deg=0, tof_max_h=24 * 60),       # case B: R = 15
+            Mission(alt1=400, alt2=800, di_deg=0, tof_max_h=0.6),                        # case C: 36 min
+            Mission(alt1=400, alt2=400, di_deg=60),                                      # plane change only
+            Mission(alt1=35786, alt2=400, di_deg=28.5, tof_max_h=3)]                     # lowering, fast
 ELLIPTICAL = [Mission(alt1=250, apo1=35786, alt2=35786, di_deg=28.5),                   # GTO -> GEO
               Mission(alt1=400, alt2=600, apo2=39700, dw_deg=270, di_deg=0),            # LEO -> Molniya
               Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=0),  # apse lines 60 deg apart
@@ -40,7 +45,7 @@ def gmat(console, make_script):
         script.write_text(make_script(report.as_posix()))
         subprocess.run([console, str(script)], cwd=Path(console).parent,
                        capture_output=True, text=True, timeout=600)
-        return [float(x) for x in report.read_text().split()] if report.exists() else None
+        return [float(x) for x in report.read_text().splitlines()[-1].split()] if report.exists() else None
 
 
 def solve_hohmann(console, alt1, alt2, di_deg, gravity):
@@ -68,30 +73,6 @@ def solve_apogee(console, m):
         if v and abs(v[5] - (INC1 - m.di_deg)) < 1e-6 and abs(v[3] - r2) < 1e-4:
             return math.hypot(*v[0:3])
     return None
-
-
-def fly_script(y0, plan, report):
-    """GMAT script that starts from Cartesian y0 and applies inertial burns at plan times."""
-    s = ["Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", "Sat.Epoch = '01 Jan 2026 12:00:00.000';",
-         "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;"]
-    s += [f"Sat.{k} = {x:.17g};" for k, x in zip(("X", "Y", "Z", "VX", "VY", "VZ"), y0)]
-    s += ["Create ForceModel FM;", "FM.CentralBody = Earth;", POINT_MASS, "Create Propagator Prop;", "Prop.FM = FM;",
-          "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;", "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;",
-          "Prop.MaxStep = 600;"]
-    for k, (_, dv) in enumerate(plan):
-        s += [f"Create ImpulsiveBurn B{k};", f"B{k}.CoordinateSystem = EarthMJ2000Eq;"]
-        s += [f"B{k}.Element{j + 1} = {dv[j]:.17g};" for j in range(3)]
-    s += ["Create ReportFile Rpt;", f"Rpt.Filename = '{report}';", "Rpt.WriteHeaders = false;", "Rpt.Precision = 17;",
-          "BeginMissionSequence;"]
-    t = 0.0
-    for k, (tb, _) in enumerate(plan):
-        if tb > t:
-            s.append(f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {tb - t:.17g}}};")
-        s.append(f"Maneuver B{k}(Sat);")
-        t = tb
-    s += ["Propagate Prop(Sat) {Sat.ElapsedSecs = 3600};",
-          "Report Rpt " + " ".join(f"Sat.EarthMJ2000Eq.{k}" for k in ("X", "Y", "Z", "VX", "VY", "VZ")) + ";"]
-    return "\n".join(s) + "\n"
 
 
 def main():
@@ -127,19 +108,23 @@ def main():
         print(f"{'GTO 250 x 35786 km -> GEO, di 28.5 deg':40s}{apse.dv:10.5f}{g:10.5f}{1e3 * (g - apse.dv):10.4f}")
         report(abs(g - apse.dv) < 1e-6, "apse-to-apse apogee burn within 1 mm/s")
 
-    print("\n=== 2. GMAT flies the elliptical burn plans; arrival vs target orbit ===")
-    for m in ELLIPTICAL:
+    print("\n=== 2. GMAT runs the exported scripts; arrival vs target orbit ===")
+    for m in CIRCULAR + ELLIPTICAL:
         for o in evaluate(m):
-            if not o.applicable:
+            if not o.vec_plan or not o.applicable:
                 continue
-            yf = gmat(console, lambda rep: fly_script(o.y0, o.vec_plan, rep))
-            if yf is None:
-                report(False, f"{o.name}: GMAT run failed")
-                continue
-            dh, de = target_mismatch(yf, m.r2, m.ra2, math.radians(m.di_deg), math.radians(m.dw_deg))
-            report(dh < 1e-6 and de < 1e-6,
-                   f"{m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f}x{m.ra2 - RE:.0f} km di={m.di_deg:g} dw={m.dw_deg:g}: "
-                   f"{o.name:32s} |dh|/h = {dh:.1e}, |de| = {de:.1e}")
+            g = gmat(console, lambda rep: gmat_script(m, o, rep))
+            name = (f"{m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f}x{m.ra2 - RE:.0f} km di={m.di_deg:g} "
+                    f"dw={m.dw_deg:g}: {o.name:36s}")
+            if g is None:
+                report(False, f"{name} GMAT run failed")
+            elif m.elliptical:
+                dh, de = target_mismatch(g[:6], m.r2, m.ra2, math.radians(m.di_deg), math.radians(m.dw_deg))
+                report(dh < 1e-6 and de < 1e-6, f"{name} |dh|/h = {dh:.1e}, |de| = {de:.1e}")
+            else:             # circular target: its node line depends on the transfer, so compare a, e, i
+                da, di = (g[6] - m.r2) / m.r2, g[8] - m.di_deg
+                report(abs(da) < 1e-6 and g[7] < 1e-6 and abs(di) < 1e-6,
+                       f"{name} da/a = {da:.1e}, e = {g[7]:.1e}, di = {di:.1e} deg")
     print(f"\n{'ALL CHECKS PASSED' if not fails else f'{fails} CHECK(S) FAILED'}")
     sys.exit(fails)
 

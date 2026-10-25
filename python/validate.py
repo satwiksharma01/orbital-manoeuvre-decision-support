@@ -1,14 +1,17 @@
 """Validation of the ODST models: textbook benchmarks + numerical propagation."""
+import json
 import math
+import re
 import sys
 
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq, minimize_scalar
 
-from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, evaluate, gravity_loss, hohmann,
-                  hohmann_optimal_split, lambert, lambert_optimal, low_thrust, one_tangent, orbit_elements,
-                  print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
+from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, burns_json, evaluate,
+                  gmat_script, gravity_loss, hohmann, hohmann_optimal_split, kepler, lambert, lambert_optimal,
+                  low_thrust, one_tangent, orbit_basis, orbit_elements, orbit_state, print_table, simulate,
+                  simulate_vec, target_mismatch, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 fails = 0
@@ -177,6 +180,57 @@ for m in ell:
         print(f"[{'PASS' if good else 'FAIL'}] {m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f}x{m.ra2 - RE:.0f} km "
               f"di={m.di_deg} dw={m.dw_deg}: {o.name:32s} dv={o.dv:.6f} TOF={o.tof / 3600:7.3f} h  "
               f"arrival |dh|/h={dh:.1e} |de|={de:.1e}")
+
+print("\n=== 5b. Export: exact burn plans, GMAT script and JSON ===")
+# Kepler propagation vs Kepler's equation: start and end points from eccentric anomalies
+rng = np.random.default_rng(7)
+worst = 0.0
+for _ in range(200):
+    rp = RE + rng.uniform(200, 2000)
+    ra = rp * rng.uniform(1, 60)
+    a, e = (rp + ra) / 2, (ra - rp) / (ra + rp)
+    P, Q = orbit_basis(rng.uniform(0, math.pi), rng.uniform(0, 2 * math.pi))
+    th = lambda E: 2 * math.atan2(math.sqrt(1 + e) * math.sin(E / 2), math.sqrt(1 - e) * math.cos(E / 2))
+    t = lambda E: math.sqrt(a ** 3 / MU) * (E - e * math.sin(E))
+    E0, E1 = rng.uniform(0, 2 * math.pi, 2)
+    E1 += 2 * math.pi * (E1 < E0)
+    y = kepler(np.concatenate(orbit_state(rp, ra, P, Q, th(E0))), t(E1) - t(E0))
+    r, v = orbit_state(rp, ra, P, Q, th(E1))
+    worst = max(worst, np.linalg.norm(y[:3] - r) / np.linalg.norm(r), np.linalg.norm(y[3:] - v) / np.linalg.norm(v))
+check("Kepler propagation vs Kepler's equation, 200 random arcs up to e = 0.97 [1e-12 relative]", 1e12 * worst, 0.0, 100)
+# The circular models' exact vector plans: propagated, they reach the target at the closed-form cost
+for m in cases + [Mission(alt1=400, alt2=400, di_deg=60), Mission(alt1=35786, alt2=400, di_deg=28.5, tof_max_h=3)]:
+    for o in evaluate(m):
+        if not o.burn_plan or not o.applicable:
+            continue
+        _, _, yf, dvsim = simulate_vec(o.y0, o.vec_plan, coast_after=3600)
+        a, e, inc = orbit_elements(yf)
+        good = abs(a - m.r2) / m.r2 < 1e-8 and e < 1e-6 and abs(inc - m.di_deg) < 1e-6 and abs(dvsim - o.dv) < 1e-12
+        fails += not good
+        print(f"[{'PASS' if good else 'FAIL'}] {m.alt1:.0f}->{m.alt2:.0f} km di={m.di_deg}: {o.name:30s} vector plan "
+              f"da/a={(a - m.r2) / m.r2:.1e} e={e:.1e} di={inc - m.di_deg:.1e} deg, sum|dv| - dv={dvsim - o.dv:.1e}")
+# GMAT script and JSON read back to the exact plan (GMAT flies them: gmat_crosscheck.py)
+for m in (cases[0], ell[1]):
+    for o in evaluate(m):
+        if not o.vec_plan:
+            continue
+        txt, js = gmat_script(m, o), json.loads(burns_json(m, o))
+        val = lambda k: float(re.search(rf"^{re.escape(k)} = (\S+);$", txt, re.M).group(1))
+        plan, t = [], 0.0
+        for line in txt[txt.index("BeginMissionSequence"):].splitlines():
+            if line.startswith("Propagate") and len(plan) < len(o.vec_plan):
+                t += float(re.search(r"ElapsedSecs = (\S+)}", line).group(1))
+            elif line.startswith("Maneuver"):
+                k = len(plan) + 1
+                plan.append((t, [val(f"Burn{k}.Element{j}") for j in (1, 2, 3)]))
+        y0 = [val(f"Sat.{k}") for k in ("X", "Y", "Z", "VX", "VY", "VZ")]
+        jplan = [(b["t_s"], b["dv_kms"]) for b in js["burns"]]
+        good = (val("Earth.Mu") == MU and y0 == list(o.y0) and js["start_state_km_kms"] == list(o.y0)
+                and all(abs(p[0] - q[0]) < 1e-9 * max(1.0, q[0]) and p[1] == list(q[1]) for p, q in zip(plan, o.vec_plan))
+                and jplan == [(q[0], list(q[1])) for q in o.vec_plan] and len(plan) == len(o.vec_plan))
+        fails += not good
+        print(f"[{'PASS' if good else 'FAIL'}] {o.name:32s} GMAT script and JSON give back the plan "
+              f"({len(plan)} burns, start state, Earth mu)")
 
 print("\n=== 6. Mission case studies ===")
 for m in cases + ell:
