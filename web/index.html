@@ -130,6 +130,8 @@ h1 { margin: 0; font: 700 clamp(32px, 4.4vw, 48px)/1.06 var(--font-display); let
 .unit { font-size: 13px; color: var(--label-3); min-width: 2.6em; }
 .row[hidden] { display: none; }
 .row.shape { cursor: default; }
+#planesRow { cursor: default; }
+.ro { color: var(--label-2); font-variant-numeric: tabular-nums; }
 .row.shape:focus-within { background: none; }
 .row.shape .seg { width: 184px; flex: none; }
 .row.invalid { background: var(--bad-soft); }
@@ -299,6 +301,13 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       <section class="group" aria-labelledby="g-orbits">
         <h2 class="group-title" id="g-orbits">Orbits</h2>
         <div class="list">
+          <div class="row shape"><span id="g-orient">Orientation</span>
+            <div class="seg" role="radiogroup" aria-labelledby="g-orient" data-seg="orient">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="orient" id="or-r" value="relative"><label for="or-r">Δi</label>
+              <input type="radio" name="orient" id="or-e" value="elements"><label for="or-e">Elements</label>
+            </div>
+          </div>
           <div class="row shape"><span id="g-shape1">Initial orbit</span>
             <div class="seg" role="radiogroup" aria-labelledby="g-shape1" data-seg="shape1">
               <span class="seg-pill" aria-hidden="true"></span>
@@ -308,6 +317,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
           </div>
           <label class="row" for="alt1"><span id="alt1-l">Initial altitude</span><span class="field"><input id="alt1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
           <label class="row" for="apo1" hidden><span>Initial apoapsis</span><span class="field"><input id="apo1" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="inc1" hidden><span>Initial inclination</span><span class="field"><input id="inc1" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
+          <label class="row" for="raan1" hidden><span>Initial RAAN</span><span class="field"><input id="raan1" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
+          <label class="row" for="argp1" hidden><span>Initial arg. of periapsis</span><span class="field"><input id="argp1" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
           <div class="row shape"><span id="g-shape2">Target orbit</span>
             <div class="seg" role="radiogroup" aria-labelledby="g-shape2" data-seg="shape2">
               <span class="seg-pill" aria-hidden="true"></span>
@@ -317,8 +329,12 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
           </div>
           <label class="row" for="alt2"><span id="alt2-l">Target altitude</span><span class="field"><input id="alt2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
           <label class="row" for="apo2" hidden><span>Target apoapsis</span><span class="field"><input id="apo2" type="number" inputmode="decimal" min="0" step="any"><span class="unit">km</span></span></label>
+          <label class="row" for="inc2" hidden><span>Target inclination</span><span class="field"><input id="inc2" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
+          <label class="row" for="raan2" hidden><span>Target RAAN</span><span class="field"><input id="raan2" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
+          <label class="row" for="argp2" hidden><span>Target arg. of periapsis</span><span class="field"><input id="argp2" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
           <label class="row" for="dw_deg" hidden><span>Target apse angle Δω</span><span class="field"><input id="dw_deg" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
           <label class="row" for="di_deg"><span>Inclination change</span><span class="field"><input id="di_deg" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
+          <div class="row" id="planesRow" hidden><span>Angle between the planes</span><span class="ro" id="planes"></span></div>
         </div>
       </section>
 
@@ -590,17 +606,26 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
   // A circular model's cplan as an exact vector plan from (r1, 0, 0): the burns of simulate() in
   // odst.py, with the coasts solved analytically (kepler) instead of integrated.
-  function circularVecPlan(r1, cplan) {
+  // Plane changes turn toward the target plane, normal [0, -sin di, cos di], and must happen on the node line (x):
+  // if the first one wouldn't (a raising one-tangent transfer changes plane on arrival), the start point moves back.
+  function circularVecPlan(r1, cplan, di) {
     const rot = (v, axis, ang) => {
       const k = mul3(1 / norm(axis), axis);
       return add3(add3(mul3(Math.cos(ang), v), mul3(Math.sin(ang), cross(k, v))), mul3(dot(k, v) * (1 - Math.cos(ang)), k));
     };
-    let y = [r1, 0, 0, 0, vc(r1), 0], t0 = 0;
+    let y = [r1, 0, 0, 0, vc(r1), 0], t0 = 0, phi = 0;
+    for (const [tb, vafter, dinc] of cplan) {                   // in the start plane up to the first plane change
+      if (tb > t0) { y = kepler(y, tb - t0); t0 = tb; }
+      if (dinc) { phi = Math.atan2(y[1], y[0]); if (Math.abs(Math.sin(phi)) < 1e-9) phi = 0; break; }
+      y = [...y.slice(0, 3), ...mul3(vafter, cross([0, 0, 1], mul3(1 / norm(y.slice(0, 3)), y.slice(0, 3))))];
+    }
+    const c = Math.cos(phi), s = Math.sin(phi), v1 = vc(r1), toward = [0, -Math.sin(di), Math.cos(di)];
+    y = [r1 * c, -r1 * s, 0, v1 * s, v1 * c, 0]; t0 = 0;
     const y0 = y.slice(), plan = [];
     for (const [tb, vafter, dinc] of cplan) {
       if (tb > t0) y = kepler(y, tb - t0);
       const r = y.slice(0, 3), v = y.slice(3), h = cross(r, v), nh = mul3(1 / norm(h), h);
-      const nA = rot(nh, r, dinc), nB = rot(nh, r, -dinc), n = nA[2] <= nB[2] ? nA : nB;   // the sense that increases inclination
+      const nA = rot(nh, r, dinc), nB = rot(nh, r, -dinc), n = dot(nA, toward) >= dot(nB, toward) ? nA : nB;
       const vNew = mul3(vafter, cross(n, mul3(1 / norm(r), r)));
       plan.push([tb, sub3(vNew, v)]);
       y = [...r, ...vNew]; t0 = tb;
@@ -634,16 +659,17 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
   // Two impulses from an apsis of the start orbit to the opposite direction on the target,
   // with the plane change split optimally. Burns below DV_ZERO are dropped (GTO -> GEO: one burn).
-  function apseTransfer(rp1, ra1, rp2, ra2, di, dw) {
-    const circ1 = ra1 - rp1 < ELL_TOL, circ2 = ra2 - rp2 < ELL_TOL, onNode = (a) => Math.abs(Math.sin(a)) < 1e-9;
-    if (!(circ1 || circ2 || onNode(dw))) return { why: "apse lines not aligned (Δω must be 0° or 180°)" };
-    const dirs = circ1 && !circ2 ? [dw, dw + Math.PI] : [0, Math.PI];
-    if (di > 0 && !dirs.every(onNode)) return { why: "a plane change needs both burns on the node line (Δω must be 0° or 180°)" };
+  function apseTransfer(rp1, ra1, rp2, ra2, di, dw, w1 = 0) {
+    const circ1 = ra1 - rp1 < ELL_TOL, circ2 = ra2 - rp2 < ELL_TOL, onNode = (a) => Math.abs(Math.sin(a)) < 1e-9, TAU = 2 * Math.PI;
+    if (circ1) w1 = 0;                                                   // a circular orbit has no periapsis to place
+    if (!(circ1 || circ2 || onNode(dw - w1))) return { why: `apse lines ${gfmt(((dw - w1) % TAU + TAU) % TAU * 180 / Math.PI)}° apart, not 0° or 180°` };
+    const dirs = circ1 && !circ2 ? [dw, dw + Math.PI] : [w1, w1 + Math.PI];   // departure, from +x
+    if (di > 0 && !dirs.every(onNode)) return { why: "a plane change needs both burns on the node line, and the apse line isn't on it" };
     const a1 = (rp1 + ra1) / 2, a2 = (rp2 + ra2) / 2;
     let best = null;
     for (const phi of dirs) {
       const th2 = phi + Math.PI - dw;
-      const rA = orbitState(rp1, ra1, 0, 0, phi).rr, rB = orbitState(rp2, ra2, di, dw, th2).rr, at = (rA + rB) / 2;
+      const rA = orbitState(rp1, ra1, 0, w1, phi - w1).rr, rB = orbitState(rp2, ra2, di, dw, th2).rr, at = (rA + rB) / 2;
       const v1 = vv(rA, a1), vtA = vv(rA, at), vtB = vv(rB, at), v2 = vv(rB, a2);
       const cost = (s) => comb(v1, vtA, s * di) + comb(vtB, v2, (1 - s) * di);
       const cands = [0, 1];
@@ -655,7 +681,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const dv1 = comb(best.v1, vtA, s * di), dv2 = comb(vtB, best.v2, (1 - s) * di);
     const c = Math.cos(s * di), sn = Math.sin(s * di), Rt = (u) => [u[0], c * u[1] - sn * u[2], sn * u[1] + c * u[2]];
     const along = (ang) => Rt([-Math.sin(ang), Math.cos(ang), 0]);
-    const st1 = orbitState(rp1, ra1, 0, 0, phi);
+    const st1 = orbitState(rp1, ra1, 0, w1, phi - w1);
     const rBv = Rt([rB * Math.cos(phi + Math.PI), rB * Math.sin(phi + Math.PI), 0]), vB = mul3(vtB, along(phi + Math.PI));
     const dv1v = sub3(mul3(vtA, along(phi)), st1.v), dv2v = sub3(orbitState(rp2, ra2, di, dw, th2).v, vB);
     const k1 = dv1 > DV_ZERO, k2 = dv2 > DV_ZERO;
@@ -664,7 +690,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     else if (k2) { y0 = [...rBv, ...vB]; plan = [[0, dv2v]]; legs = [[rB, dv2]]; tof = 0; }       // already on the transfer orbit
     else { y0 = [...st1.r, ...st1.v]; plan = k1 ? [[0, dv1v]] : []; legs = k1 ? [[rA, dv1]] : []; tof = 0; }
     return { dv: dv1 * k1 + dv2 * k2, tof, burns: plan.length, y0, plan, legs,
-             params: { split_at_dep: s, depart_deg: ((phi * 180 / Math.PI) % 360 + 360) % 360, rA, rB } };
+             params: { split_at_dep: s, depart_deg: (((phi - w1) * 180 / Math.PI) % 360 + 360) % 360, rA, rB } };
   }
   // Plain Nelder-Mead (reflect 1, expand 2, contract 0.5, shrink 0.5), as _nelder_mead in odst.py.
   function nelderMead(f, x0, steps, iters = 400, tol = 1e-12) {
@@ -696,7 +722,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   // per cell, then Nelder-Mead from the best cell, restarted once. Transfers within 0.5 deg of 0 or
   // 180 deg skipped. The arc must stay above H_ARC_MIN: an exact penalty (gentle to search, stiff to
   // polish), because a wall stops Nelder-Mead short of the boundary. A result below it is rejected.
-  function lambertOptimal(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid = 16) {
+  function lambertOptimal(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid = 16, w1 = 0) {
     const tmin = 60, per = (rp, ra) => 2 * Math.PI * Math.sqrt(((rp + ra) / 2) ** 3 / MU);
     const tmax = Math.min(tofmax, Math.max(per(rp1, ra1), per(rp2, ra2)));
     if (tmax <= tmin) return null;
@@ -704,7 +730,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const K_SEARCH = 0.01, K_POLISH = 10;                               // km/s per km below the floor
     const solve = ([th1, th2, u], K) => {
       if (!(u >= 0 && u <= 1)) return [Infinity, null];
-      const s1 = orbitState(rp1, ra1, 0, 0, th1), s2 = orbitState(rp2, ra2, di, dw, th2);
+      const s1 = orbitState(rp1, ra1, 0, w1, th1), s2 = orbitState(rp2, ra2, di, dw, th2);
       if (norm(cross(s1.r, s2.r)) < gap * norm(s1.r) * norm(s2.r)) return [Infinity, null];
       const sol = lambert(s1.r, s2.r, tmin + u * (tmax - tmin));
       if (!sol) return [Infinity, null];
@@ -766,7 +792,31 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
 
   // ------------------------------------------------------------- evaluate
+  // Unit vectors to periapsis (P), 90 deg ahead of it (Q) and along the normal (W) in EarthMJ2000Eq, from
+  // inclination, RAAN and argument of periapsis (rad), as perifocal in odst.py.
+  function perifocal(i, raan, w) {
+    const ci = Math.cos(i), si = Math.sin(i), cO = Math.cos(raan), sO = Math.sin(raan), cw = Math.cos(w), sw = Math.sin(w);
+    return { P: [cO * cw - sO * sw * ci, sO * cw + cO * sw * ci, sw * si], Q: [-cO * sw - sO * cw * ci, -sO * sw + cO * cw * ci, cw * si],
+             W: [sO * si, -cO * si, ci] };
+  }
+  // A mission with m.elements = [i1, RAAN1, argp1, i2, RAAN2, argp2] (deg) gets the relative inputs the models use:
+  // di_deg (the angle between the planes), w1_deg and dw_deg (each periapsis from the node line, where the target
+  // crosses the start plane going north) and R, the relative frame's axes (columns) in EarthMJ2000Eq. Coplanar orbits
+  // have no node line, so the start periapsis takes its place; a circular orbit's periapsis goes on the node line.
+  // As relative_geometry in odst.py. Without elements, R is null: the tool's frame.
+  function resolve(m) {
+    if (!m.elements) return { ...m, w1_deg: m.w1_deg ?? 0, dw_deg: m.dw_deg ?? 0, R: null };
+    const [p1, p2] = [0, 3].map((k) => perifocal(...m.elements.slice(k, k + 3).map((x) => x * Math.PI / 180)));
+    const n = cross(p1.W, p2.W), nn = norm(n), x = nn > 1e-9 ? mul3(1 / nn, n) : p1.P;
+    const y = cross(p1.W, x), y2 = cross(p2.W, x);                    // 90 deg ahead of +x in each plane
+    const circ = (alt, apo) => apo == null || (RE + apo) - (RE + alt) < ELL_TOL;
+    const ang = (P, yy, c) => c ? 0 : ((Math.round(Math.atan2(dot(P, yy), dot(P, x)) * 180 / Math.PI * 1e12) / 1e12) % 360 + 360) % 360;
+    return { ...m, di_deg: Math.atan2(nn, dot(p1.W, p2.W)) * 180 / Math.PI, w1_deg: ang(p1.P, y, circ(m.alt1, m.apo1)),
+             dw_deg: ang(p2.P, y2, circ(m.alt2, m.apo2)), R: [x, y, p1.W] };
+  }
+
   function evaluate(m) {
+    m = resolve(m);
     const r1 = RE + m.alt1, r2 = RE + m.alt2, di = m.di_deg * Math.PI / 180, tofmax = m.tof_max_h * 3600;
     const ra1 = m.apo1 == null ? r1 : RE + m.apo1, ra2 = m.apo2 == null ? r2 : RE + m.apo2;   // null = circular
     const ell = ra1 - r1 > ELL_TOL || ra2 - r2 > ELL_TOL;
@@ -779,7 +829,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (ell) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax); else circularOptions(m, add, r1, r2, di, tofmax);
 
     for (const o of opts) {
-      if (o.cplan) Object.assign(o, circularVecPlan(r1, o.cplan));   // y0 + plan, as the elliptical models
+      if (o.cplan) Object.assign(o, circularVecPlan(r1, o.cplan, di));   // y0 + plan, as the elliptical models
       o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
       o.prop_frac = 1 - Math.exp(-(o.dv + o.dv_loss) / (o.isp * G0));   // the propellant also pays for the loss
       o.reasons = []; o.feasible = o.applicable;
@@ -793,15 +843,15 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     score(m, opts);
     const feas = opts.filter((o) => o.feasible);
     const rec = feas.length ? feas.reduce((b, o) => (o.score_ws > b.score_ws ? o : b)) : null;
-    return { opts, rec, advice: ell ? ellipticalAdvice(m, opts[0].applicable) : advice(m, r1, r2, di), r1, r2, ra1, ra2, ell };
+    return { opts, rec, advice: ell ? ellipticalAdvice(opts[0]) : advice(m, r1, r2, di), r1, r2, ra1, ra2, ell, m };
   }
 
   // Hohmann, bi-elliptic, one-tangent and Edelbaum assume circular orbits, so an elliptical
   // mission is sized with the apse-to-apse and Lambert models only (as odst.py).
   let ellMemo = { key: "" };   // the Lambert search takes ~70 ms; weight and budget changes reuse it
   function ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax) {
-    const dw = m.dw_deg * Math.PI / 180, key = [r1, ra1, r2, ra2, di, dw, tofmax].join();
-    if (ellMemo.key !== key) ellMemo = { key, ap: apseTransfer(r1, ra1, r2, ra2, di, dw), lam: lambertOptimal(r1, ra1, r2, ra2, di, dw, tofmax) };
+    const dw = m.dw_deg * Math.PI / 180, w1 = m.w1_deg * Math.PI / 180, key = [r1, ra1, r2, ra2, di, dw, w1, tofmax].join();
+    if (ellMemo.key !== key) ellMemo = { key, ap: apseTransfer(r1, ra1, r2, ra2, di, dw, w1), lam: lambertOptimal(r1, ra1, r2, ra2, di, dw, tofmax, 16, w1) };
     const { ap, lam } = ellMemo;
     if (ap.why) add("apse", "Apse-to-apse (optimal Δi split)", { dv: NaN, tof: NaN, burns: 0 }, m.isp_chem, { applicable: false, note: ap.why });
     else add("apse", "Apse-to-apse (optimal Δi split)", ap, m.isp_chem);
@@ -809,10 +859,10 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
                   { applicable: false, note: "no single-revolution Lambert transfer within the time limit" });
     else add("lambert", "Lambert (minimum Δv)", lam, m.isp_chem, { note: lam.params.time_limited ? "time limit sets the transfer time" : "" });
   }
-  function ellipticalAdvice(m, apseOk) {
+  function ellipticalAdvice(apse) {
     return ["Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume circular orbits, so the apse-to-apse and Lambert transfers are sized instead.",
-            apseOk ? "Apse lines aligned: a transfer between apsides is available, usually the cheapest."
-                   : `Apse lines ${m.dw_deg}° apart: only a Lambert transfer is offered.`];
+            apse.applicable ? "Apse lines aligned: a transfer between apsides is available, usually the cheapest."
+                            : `No apse-to-apse transfer: ${apse.note}. Only a Lambert transfer is offered.`];
   }
 
   function circularOptions(m, add, r1, r2, di, tofmax) {
@@ -882,52 +932,64 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   // ------------------------------------------------------------- export
   // NASA GMAT script and JSON of an option's burn plan, as gmat_script and burns_json in odst.py.
   const EPOCH = "01 Jan 2026 12:00:00.000";   // UTC; arbitrary, as the tool has no timing model yet
-  const FRAME = "EarthMJ2000Eq, start orbit in the X-Y plane with its periapsis on +X";
+  const frameText = (m) => m.R ? "EarthMJ2000Eq, orbits from the elements entered"
+                               : "EarthMJ2000Eq, the tool's frame: start orbit in the X-Y plane, node line on +X";
   const num = (x) => String(x + 0);                          // shortest text that reads back exactly; + 0 turns -0 into 0
-  const gfmt = (x) => String(Number((+x).toPrecision(6)));   // like printf %g
+  const gfmt = (x, p = 6) => String(Number((+x).toPrecision(p)));   // like printf %g (%.4g with p = 4)
   const alts = (m) => [m.alt1, m.apo1 ?? m.alt1, m.alt2, m.apo2 ?? m.alt2];
+  // Option o's start state and burns in EarthMJ2000Eq: the relative frame turned by R, as inertial_plan in odst.py.
+  function inertialPlan(m, o) {
+    const R = resolve(m).R, turn = (v) => (R ? add3(add3(mul3(v[0], R[0]), mul3(v[1], R[1])), mul3(v[2], R[2])) : v);
+    return { y0: [...turn(o.y0.slice(0, 3)), ...turn(o.y0.slice(3))], plan: o.plan.map(([t, dv]) => [t, turn(dv)]) };
+  }
   function gmatScript(m, o, report = "odst_arrival.txt") {
-    const [p1, a1, p2, a2] = alts(m), K = ["X", "Y", "Z", "VX", "VY", "VZ"];
+    m = resolve(m);
+    const [p1, a1, p2, a2] = alts(m), K = ["X", "Y", "Z", "VX", "VY", "VZ"], { y0, plan } = inertialPlan(m, o), e = m.elements;
+    const orbits = m.R
+      ? [`% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude, i ${gfmt(e[0])} deg, RAAN ${gfmt(e[1])} deg, argp ${gfmt(e[2])} deg`,
+         `% Target orbit ${gfmt(p2)} x ${gfmt(a2)} km altitude, i ${gfmt(e[3])} deg, RAAN ${gfmt(e[4])} deg, argp ${gfmt(e[5])} deg; planes ${gfmt(m.di_deg, 4)} deg apart`]
+      : [`% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude; target ${gfmt(p2)} x ${gfmt(a2)} km, di ${gfmt(m.di_deg)} deg, dw ${gfmt(m.dw_deg)} deg`];
     const s = ["% Orbital Manoeuvre Decision Support Tool: GMAT export",
-      `% Transfer: ${o.name.replace(/Δ/g, "d")}, ${o.plan.length} burn(s), total dv ${o.dv.toFixed(4)} km/s (impulsive), flight time ${(o.tof / 3600).toFixed(2)} h`,
-      `% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude; target ${gfmt(p2)} x ${gfmt(a2)} km, di ${gfmt(m.di_deg)} deg, dw ${gfmt(m.dw_deg ?? 0)} deg`,
-      `% Frame: ${FRAME}, as in the tool.`,
-      "%   The epoch is arbitrary: the tool has no timing model yet.",
+      `% Transfer: ${o.name.replace(/Δ/g, "d")}, ${plan.length} burn(s), total dv ${o.dv.toFixed(4)} km/s (impulsive), flight time ${(o.tof / 3600).toFixed(2)} h`,
+      ...orbits,
+      `% Frame: ${frameText(m)}.`,
+      "%   The epoch is arbitrary: the tool has no timing model yet, so Sat starts at the departure point.",
       "% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
       "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies.",
       "", "% GMAT's default is 398600.4415, enough to shift a 10-day transfer's arrival by 0.2 km", `Earth.Mu = ${num(MU)};`,
       "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", `Sat.Epoch = '${EPOCH}';`,
       "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;",
-      ...K.map((k, j) => `Sat.${k} = ${num(o.y0[j])};`),
+      ...K.map((k, j) => `Sat.${k} = ${num(y0[j])};`),
       "", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
       "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
       "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"];
-    o.plan.forEach(([, dv], i) => s.push("", `Create ImpulsiveBurn Burn${i + 1};`, `Burn${i + 1}.CoordinateSystem = EarthMJ2000Eq;`,
-                                        ...dv.map((x, j) => `Burn${i + 1}.Element${j + 1} = ${num(x)};`)));
+    plan.forEach(([, dv], i) => s.push("", `Create ImpulsiveBurn Burn${i + 1};`, `Burn${i + 1}.CoordinateSystem = EarthMJ2000Eq;`,
+                                      ...dv.map((x, j) => `Burn${i + 1}.Element${j + 1} = ${num(x)};`)));
     s.push("", "Create ReportFile Arrival;", `Arrival.Filename = '${report}';`, "Arrival.Precision = 16;", "Arrival.WriteHeaders = true;",
            "", "Create OrbitView View;", "View.Add = {Sat, Earth};", "", "BeginMissionSequence;");
     let t = 0;
-    o.plan.forEach(([tb], i) => {
+    plan.forEach(([tb], i) => {
       if (tb > t) s.push(`Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(tb - t)}};`);
       s.push(`Maneuver Burn${i + 1}(Sat);`);
       t = tb;
     });
     const r2 = RE + p2, ra2 = RE + a2;
-    s.push(`Report Arrival ${K.map((k) => "Sat.EarthMJ2000Eq." + k).join(" ")} Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;`,
+    s.push(`Report Arrival ${K.map((k) => "Sat.EarthMJ2000Eq." + k).join(" ")} Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP;`,
            `Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(2 * Math.PI * Math.sqrt(((r2 + ra2) / 2) ** 3 / MU))}};`);
     return s.join("\n") + "\n";
   }
   function burnsJson(m, o) {
-    const [p1, a1, p2, a2] = alts(m), z = (x) => x + 0;
+    m = resolve(m);
+    const [p1, a1, p2, a2] = alts(m), z = (x) => x + 0, { y0, plan } = inertialPlan(m, o);
     return JSON.stringify({ tool: "Orbital Manoeuvre Decision Support Tool", transfer: o.name, dv_kms: o.dv, tof_s: o.tof,
-      start_orbit_alt_km: [p1, a1], target_orbit_alt_km: [p2, a2], di_deg: m.di_deg, dw_deg: m.dw_deg ?? 0,
-      frame: FRAME, epoch_utc: EPOCH, mu_km3_s2: MU, start_state_km_kms: o.y0.map(z),
-      burns: o.plan.map(([t, dv]) => ({ t_s: t, dv_kms: dv.map(z), dv_mag_kms: norm(dv) })) }, null, 2) + "\n";
+      start_orbit_alt_km: [p1, a1], target_orbit_alt_km: [p2, a2], di_deg: m.di_deg, dw_deg: m.dw_deg, w1_deg: m.w1_deg,
+      elements_deg: m.elements ? m.elements.map(z) : null, frame: frameText(m), epoch_utc: EPOCH, mu_km3_s2: MU,
+      start_state_km_kms: y0.map(z), burns: plan.map(([t, dv]) => ({ t_s: t, dv_kms: dv.map(z), dv_mag_kms: norm(dv) })) }, null, 2) + "\n";
   }
 
   const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
                 orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN,
-                kepler, circularVecPlan, gmatScript, burnsJson };
+                kepler, circularVecPlan, gmatScript, burnsJson, perifocal, resolve, inertialPlan };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -946,7 +1008,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const ICON_INFO = '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>';
 
   const DEFAULT = { alt1: 400, alt2: 35786, apo1: null, apo2: null, dw_deg: 0, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
-                    propulsion: "both", isp_chem: 320, tw_chem: 0.5, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced" };
+                    propulsion: "both", isp_chem: 320, tw_chem: 0.5, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced",
+                    orient: "relative", inc1: 28.5, raan1: 0, argp1: 0, inc2: 0, raan2: 0, argp2: 0 };   // elements: LEO at 28.5 deg -> GEO
   const EXAMPLES = [
     { label: "LEO → GEO", v: {} },
     { label: "High orbit, R = 15", v: { alt1: 621.863, alt2: 98621.863, di_deg: 0, tof_max_h: 1440, propulsion: "chemical", preset: "Propellant-critical" } },
@@ -955,8 +1018,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     { label: "60° plane change", v: { alt1: 500, alt2: 500, di_deg: 60, dv_budget: 10, tof_max_h: 4800, propulsion: "chemical", preset: "Propellant-critical" } },
     { label: "GTO → GEO", v: { alt1: 250, apo1: 35786, alt2: 35786, propulsion: "chemical" } },
     { label: "LEO → Molniya", v: { alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0, propulsion: "chemical" } },
+    { label: "Kourou GTO", v: { alt1: 250, apo1: 35786, orient: "elements", inc1: 6, argp1: 178, propulsion: "chemical" } },
   ];
-  const numIds = ["alt1", "apo1", "alt2", "apo2", "dw_deg", "di_deg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep"];
+  const numIds = ["alt1", "apo1", "alt2", "apo2", "dw_deg", "di_deg", "inc1", "raan1", "argp1", "inc2", "raan2", "argp2", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep"];
 
   // ---------------------------------------------------------------- springs
   // Apple-style parameters: response (s) and damping ratio. Re-targeting keeps the
@@ -990,6 +1054,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const fmtT = (s) => s < 60 ? [s.toFixed(0), "s"] : s < 3600 ? [(s / 60).toFixed(0), "min"] : s < 72 * 3600 ? [(s / 3600).toFixed(2), "h"] : [(s / 86400).toFixed(1), "days"];
   const fmtTs = (s) => fmtT(s).join(" ");
   const fmtKm = (x) => Math.round(x).toLocaleString("en-US");
+  const fmtDeg = (x) => String(+(+x).toFixed(2));             // 28.5 stays 28.5; 58.815692... reads 58.82
   const splitName = (n) => { const i = n.indexOf(" ("); return i < 0 ? [n, ""] : [n.slice(0, i), n.slice(i + 2, -1)]; };
   const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
   function el(tag, attrs, parent, style) {
@@ -1038,16 +1103,21 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     $("apo1").value = s.apo1 ?? s.alt1; $("apo2").value = s.apo2 ?? s.alt2;      // circular: apoapsis = periapsis
     document.querySelector(`input[name="shape1"][value="${s.apo1 == null ? "circular" : "elliptical"}"]`).checked = true;
     document.querySelector(`input[name="shape2"][value="${s.apo2 == null ? "circular" : "elliptical"}"]`).checked = true;
+    document.querySelector(`input[name="orient"][value="${s.orient}"]`).checked = true;
     showShapes();
     document.querySelector(`input[name="propulsion"][value="${s.propulsion}"]`).checked = true;
     setPreset(s.preset);
     segs.forEach((g) => layoutSeg(g, true));
   }
   const elliptical = (k) => document.querySelector(`input[name="shape${k}"]:checked`).value === "elliptical";
+  const byElements = () => document.querySelector('input[name="orient"]:checked').value === "elements";
   function showShapes() {
-    const e1 = elliptical(1), e2 = elliptical(2);
+    const e1 = elliptical(1), e2 = elliptical(2), el = byElements();
     $("apo1").closest(".row").hidden = !e1;
-    $("apo2").closest(".row").hidden = !e2; $("dw_deg").closest(".row").hidden = !e2;
+    $("apo2").closest(".row").hidden = !e2; $("dw_deg").closest(".row").hidden = !e2 || el; $("di_deg").closest(".row").hidden = el;
+    ["inc1", "raan1", "inc2", "raan2"].forEach((id) => { $(id).closest(".row").hidden = !el; });
+    $("argp1").closest(".row").hidden = !(el && e1); $("argp2").closest(".row").hidden = !(el && e2);   // a circle has no periapsis
+    $("planesRow").hidden = !el;
     $("alt1-l").textContent = e1 ? "Initial periapsis" : "Initial altitude";
     $("alt2-l").textContent = e2 ? "Target periapsis" : "Target altitude";
   }
@@ -1071,6 +1141,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     numIds.forEach((id) => { m[id] = parseFloat($(id).value); });
     if (!elliptical(1)) m.apo1 = null;
     if (!elliptical(2)) { m.apo2 = null; m.dw_deg = 0; }     // a circular target has no apse line
+    if (byElements()) m.elements = [m.inc1, m.raan1, m.apo1 == null ? 0 : m.argp1, m.inc2, m.raan2, m.apo2 == null ? 0 : m.argp2];
     return m;
   }
   function validate() {
@@ -1092,7 +1163,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   let frame = 0;
   const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; run({}); }); };
   numIds.forEach((id) => $(id).addEventListener("input", () => { clearExample(); schedule(); }));
-  document.querySelectorAll('input[name="shape1"], input[name="shape2"]').forEach((r) => r.addEventListener("change", () => {
+  document.querySelectorAll('input[name="shape1"], input[name="shape2"], input[name="orient"]').forEach((r) => r.addEventListener("change", () => {
     showShapes(); layoutSeg(r.closest(".seg"), true); clearExample(); run({});
   }));
   document.querySelectorAll('input[name="propulsion"]').forEach((r) => r.addEventListener("change", () => {
@@ -1117,7 +1188,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero. An orbit's apoapsis can't be below its periapsis.</p>`;
       return;
     }
-    const m = readMission();
+    const m = O.resolve(readMission());
+    $("planes").textContent = `${fmtDeg(m.di_deg)}°`;
     if (m.weights.every((w) => w === 0)) m.weights = [1, 1, 1, 1];
     const res = O.evaluate(m);
     const prevSel = selected;
@@ -1152,16 +1224,16 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   // ---------------------------------------------------------------- verdict
   function detail(o, m) {
     const p = o.params || {};
-    if (o.key === "hohmann_split") return `Split the ${m.di_deg}° plane change: ${(p.split_at_r1 * m.di_deg).toFixed(2)}° at departure and ${((1 - p.split_at_r1) * m.di_deg).toFixed(2)}° at arrival.`;
+    if (o.key === "hohmann_split") return `Split the ${fmtDeg(m.di_deg)}° plane change: ${(p.split_at_r1 * m.di_deg).toFixed(2)}° at departure and ${((1 - p.split_at_r1) * m.di_deg).toFixed(2)}° at arrival.`;
     if (o.key === "bielliptic") return `Coast out to an optimal apoapsis of ${fmtKm(p.rb)} km (${p.rb_over_r1.toFixed(1)} times the initial radius), where a plane change is cheapest, then fall to the target orbit.`;
     if (o.key === "one_tangent") return `A faster transfer ellipse (k = ${p.k.toFixed(4)}, e = ${p.e.toFixed(3)}) meets the target orbit at a ${p.fpa_deg.toFixed(1)}° flight-path angle.${o.note.startsWith("k solved") ? " k is the smallest value that meets the time limit." : ""}`;
     if (o.key === "low_thrust") return `Continuous thrust at ${m.accel_ep} m/s² spirals out over about ${Math.round(o.revs).toLocaleString("en-US")} revolutions. The high Isp keeps the propellant mass low.`;
     if (o.key === "apse") return o.burns === 1
-      ? `One burn where the two orbits touch puts the spacecraft on the target orbit.${m.di_deg > 0 ? ` It also turns the plane by ${m.di_deg}°.` : ""}`
-      : `Two burns half a transfer ellipse apart, at ${fmtKm(p.rA)} km and ${fmtKm(p.rB)} km from Earth's centre.${m.di_deg > 0 ? ` ${(p.split_at_dep * m.di_deg).toFixed(2)}° of the ${m.di_deg}° plane change is done at departure.` : ""}`;
+      ? `One burn where the two orbits touch puts the spacecraft on the target orbit.${m.di_deg > 0 ? ` It also turns the plane by ${fmtDeg(m.di_deg)}°.` : ""}`
+      : `Two burns half a transfer ellipse apart, at ${fmtKm(p.rA)} km and ${fmtKm(p.rB)} km from Earth's centre.${m.di_deg > 0 ? ` ${(p.split_at_dep * m.di_deg).toFixed(2)}° of the ${fmtDeg(m.di_deg)}° plane change is done at departure.` : ""}`;
     if (o.key === "lambert") return `The cheapest two-burn transfer the Lambert search found: depart at ${p.th1_deg.toFixed(0)}° true anomaly on the start orbit, arrive at ${p.th2_deg.toFixed(0)}° on the target orbit.${p.time_limited ? " The time limit sets the transfer time." : ""}`;
     if (o.burns === 1) return "A single burn at the node rotates the orbit plane. No transfer orbit is needed.";
-    return m.di_deg > 0 ? `The ${m.di_deg}° plane change is combined with the burn at the larger radius, where the orbital speed is lowest.` : "Two tangential burns at the ends of the transfer ellipse.";
+    return m.di_deg > 0 ? `The ${fmtDeg(m.di_deg)}° plane change is combined with the burn at the larger radius, where the orbital speed is lowest.` : "Two tangential burns at the ends of the transfer ellipse.";
   }
   function renderVerdict(m, res) {
     const v = $("verdict"), r = res.rec;
@@ -1374,7 +1446,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         for (let i = 0; i < 180; i++) { const q = O.orbitState(rp, ra, di, dw, 2 * Math.PI * i / 180).r; d.push((cx + q[0] * S).toFixed(1) + " " + (cy - q[1] * S).toFixed(1)); }
         el("path", Object.assign({ d: "M" + d.join("L") + "Z" }, attrs), svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
       };
-      outline(r1, res.ra1, 0, 0, {});
+      outline(r1, res.ra1, 0, m.w1_deg * Math.PI / 180, {});
       outline(r2, res.ra2, m.di_deg * Math.PI / 180, m.dw_deg * Math.PI / 180, { "stroke-dasharray": "4 5" });
     } else {
       el("circle", { cx, cy, r: r1 * S }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
@@ -1420,8 +1492,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }, animate ? { from: 0, response: 1.05, eps: 1e-4 } : { snap: true });
     $("geoSub").textContent = o.key === "low_thrust"
       ? `Schematic spiral: 6 turns drawn, about ${Math.round(o.revs).toLocaleString("en-US")} in flight.`
-      : res.ell ? `Top view, to scale. Solid: start orbit. Dashed: target orbit.${m.di_deg > 0 ? ` Its plane is tilted ${m.di_deg}°, so it looks narrower here.` : ""}`
-      : `Top view, to scale. Solid: ${fmtKm(m.alt1)} km start orbit. Dashed: ${fmtKm(m.alt2)} km target.${m.di_deg > 0 ? ` The ${m.di_deg}° plane change is out of this view.` : ""}`;
+      : res.ell ? `Top view, to scale. Solid: start orbit. Dashed: target orbit.${m.di_deg > 0 ? ` Its plane is tilted ${fmtDeg(m.di_deg)}°, so it looks narrower here.` : ""}`
+      : `Top view, to scale. Solid: ${fmtKm(m.alt1)} km start orbit. Dashed: ${fmtKm(m.alt2)} km target.${m.di_deg > 0 ? ` The ${fmtDeg(m.di_deg)}° plane change is out of this view.` : ""}`;
   }
 
   function renderRules(res) {

@@ -116,41 +116,100 @@ for (const m of circ) {
   const r = O.evaluate(m);
   for (const o of r.opts) {
     if (!o.cplan || !o.applicable) continue;
-    const sim = O.simulateVec(o.y0, o.plan, 3600, 200000), y = sim.yf, rv = y.slice(0, 3), v = y.slice(3), h = cross(rv, v);   // fine steps: coasts out to e = 0.97
-    const a = 1 / (2 / nrm(rv) - (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) / O.MU);
-    const e = nrm(cross(v, h).map((x, i) => x / O.MU - rv[i] / nrm(rv))), inc = Math.acos(h[2] / nrm(h)) * 180 / Math.PI;
-    const ok = Math.abs(a - r.r2) / r.r2 < 1e-8 && e < 1e-6 && Math.abs(inc - m.di_deg) < 1e-6 && Math.abs(sim.dvUsed - o.dv) < 1e-12; fails += !ok;
+    const sim = O.simulateVec(o.y0, o.plan, 3600, 200000);   // fine steps: coasts out to e = 0.97
+    // the target plane itself (normal [0, -sin di, cos di]), not only its inclination
+    const [dh, de] = O.targetMismatch(sim.yf, r.r2, r.ra2, m.di_deg * Math.PI / 180, 0);
+    const ok = dh < 1e-6 && de < 1e-6 && Math.abs(sim.dvUsed - o.dv) < 1e-12; fails += !ok;
     console.log(`[${ok ? "PASS" : "FAIL"}] ${m.alt1.toFixed(0)}->${m.alt2.toFixed(0)} km di=${m.di_deg}: ${o.key} vector plan (RK4) ` +
-                `da/a=${((a - r.r2) / r.r2).toExponential(1)} e=${e.toExponential(1)} di=${(inc - m.di_deg).toExponential(1)} deg, sum|dv| - dv=${(sim.dvUsed - o.dv).toExponential(1)}`);
+                `|dh|/h=${dh.toExponential(1)} |de|=${de.toExponential(1)}, sum|dv| - dv=${(sim.dvUsed - o.dv).toExponential(1)}`);
   }
 }
-// same plans as python/odst.py: closed-form burns (no optimiser), [t, [dvx, dvy, dvz]]
-const pyRefV = { hohmann: [[0, [0, 2.3974725168152418, 0]], [19048.562509797113, [9.211582468598876e-16, -1.0838903670048219, 1.467101568882389]]],
-                 one_tangent: [[0, [0, 2.638184468665157, 0]], [10862.249834254219, [1.426823308614846, -1.958020944631118, 1.4671015688823885]]] };
-for (const [k, ref] of Object.entries(pyRefV)) {
+// same plans as python/odst.py: closed-form burns (no optimiser), start state and [t, [dvx, dvy, dvz]]
+const pyRefV = { hohmann: [[6778.137, 0, 0, 0, 7.668558175407055, 0],
+                           [[0, [0, 2.3974725168152418, 0]], [19048.562509797113, [9.211582468598876e-16, -1.0838903670048219, -1.467101568882389]]]],
+                 one_tangent: [[-5964.52423775776, -3219.874501897429, 0, 3.6428586402591523, -6.748063827253831, 0],
+                               [[0, [1.2532385966758652, -2.3215103511524484, 0]], [10862.249834254219, [-2.18568965499367, 1.0451944822253934, 1.467101568882389]]]] };
+const rel = (a, b) => Math.abs(a - b) / Math.max(1, Math.abs(b));
+for (const [k, [y0, ref]] of Object.entries(pyRefV)) {
   const o = O.evaluate(base).opts.find((x) => x.key === k);
-  const d = Math.max(...ref.flatMap(([t, dv], i) => [t, ...dv].map((x, j) => Math.abs([o.plan[i][0], ...o.plan[i][1]][j] - x) / Math.max(1, Math.abs(x)))));
+  const d = Math.max(...y0.map((x, j) => rel(o.y0[j], x)),
+                     ...ref.flatMap(([t, dv], i) => [t, ...dv].map((x, j) => rel([o.plan[i][0], ...o.plan[i][1]][j], x))));
   const ok = d < 1e-12; fails += !ok;
-  console.log(`[${ok ? "PASS" : "FAIL"}] LEO -> GEO ${k} vector plan vs Python: largest difference ${d.toExponential(1)}`);
+  console.log(`[${ok ? "PASS" : "FAIL"}] LEO -> GEO ${k} start state and vector plan vs Python: largest difference ${d.toExponential(1)}`);
 }
 // GMAT script and JSON read back to the exact plan (GMAT flies them: python/gmat_crosscheck.py)
-for (const m of [base, { ...base, alt1: 400, alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0 }]) {
+for (const m of [base, { ...base, alt1: 400, alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0 },
+                 { ...base, alt1: 400, alt2: 600, apo2: 39700, elements: [51.6, 30, 0, 63.4, 100, 270], tof_max_h: 30 }]) {
   for (const o of O.evaluate(m).opts) {
     if (!o.plan || !o.plan.length) continue;
-    const txt = O.gmatScript(m, o), js = JSON.parse(O.burnsJson(m, o));
+    const txt = O.gmatScript(m, o), js = JSON.parse(O.burnsJson(m, o)), ip = O.inertialPlan(m, o);
     const val = (k) => +txt.match(new RegExp(`^${k.replace(/\./g, "\\.")} = (\\S+);$`, "m"))[1];
     const plan = []; let t = 0;
     for (const line of txt.slice(txt.indexOf("BeginMissionSequence")).split("\n")) {
-      if (line.startsWith("Propagate") && plan.length < o.plan.length) t += +line.match(/ElapsedSecs = (\S+)}/)[1];
+      if (line.startsWith("Propagate") && plan.length < ip.plan.length) t += +line.match(/ElapsedSecs = (\S+)}/)[1];
       else if (line.startsWith("Maneuver")) { const b = plan.length + 1; plan.push([t, [1, 2, 3].map((j) => val(`Burn${b}.Element${j}`))]); }
     }
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-    const ok = val("Earth.Mu") === O.MU && same(["X", "Y", "Z", "VX", "VY", "VZ"].map((k) => val("Sat." + k)), o.y0.map((x) => x + 0)) &&
-               same(js.start_state_km_kms, o.y0.map((x) => x + 0)) && plan.length === o.plan.length &&
-               plan.every(([tb, dv], i) => Math.abs(tb - o.plan[i][0]) <= 1e-9 * Math.max(1, o.plan[i][0]) && same(dv, o.plan[i][1].map((x) => x + 0))) &&
-               same(js.burns.map((b) => [b.t_s, b.dv_kms]), o.plan.map(([tb, dv]) => [tb, dv.map((x) => x + 0)]));
+    const ok = val("Earth.Mu") === O.MU && same(["X", "Y", "Z", "VX", "VY", "VZ"].map((k) => val("Sat." + k)), ip.y0.map((x) => x + 0)) &&
+               same(js.start_state_km_kms, ip.y0.map((x) => x + 0)) && plan.length === ip.plan.length &&
+               plan.every(([tb, dv], i) => Math.abs(tb - ip.plan[i][0]) <= 1e-9 * Math.max(1, ip.plan[i][0]) && same(dv, ip.plan[i][1].map((x) => x + 0))) &&
+               same(js.burns.map((b) => [b.t_s, b.dv_kms]), ip.plan.map(([tb, dv]) => [tb, dv.map((x) => x + 0)])) &&
+               same(js.elements_deg, m.elements ?? null);
     fails += !ok;
-    console.log(`[${ok ? "PASS" : "FAIL"}] ${o.key}: GMAT script and JSON give back the plan (${plan.length} burns, start state, Earth mu)`);
+    console.log(`[${ok ? "PASS" : "FAIL"}] ${o.key}: GMAT script and JSON give back the plan (${plan.length} burns, start state, Earth mu${m.elements ? ", elements" : ""})`);
+  }
+}
+
+// ---- orbital elements (as python/validate.py section 5c)
+const dvs = (m) => Object.fromEntries(O.evaluate(m).opts.filter((o) => o.applicable).map((o) => [o.key, o.dv]));
+const diff = (a, b) => (same2(Object.keys(a), Object.keys(b)) ? Math.max(...Object.keys(a).map((k) => Math.abs(a[k] - b[k]))) : Infinity);
+const same2 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+for (const [relm, el] of [[{ ...base, alt1: 400, alt2: 600, apo2: 39700, di_deg: 20, dw_deg: 270 }, [0, 0, 0, 20, 0, 270]],
+                          [{ ...base, alt1: 250, apo1: 35786, alt2: 35786, di_deg: 28.5 }, [0, 0, 0, 28.5, 0, 0]]])
+  check(`Elements [${el}] == relative inputs, every option [km/s]`, diff(dvs({ ...relm, elements: el }), dvs(relm)), 0, 1e-12);
+const ell2 = { ...base, alt1: 300, apo1: 12000, alt2: 800, apo2: 20000, tof_max_h: 20 };
+check("Both orbits turned 40 deg about the pole: Lambert, 3D [km/s]",
+      diff(dvs({ ...ell2, elements: [28.5, 10, 30, 40, 70, 120] }), dvs({ ...ell2, elements: [28.5, 50, 30, 40, 110, 120] })), 0, 1e-9);
+const raan = O.resolve({ ...base, alt1: 500, alt2: 500, elements: [51.6, 0, 0, 51.6, 10, 0] });
+const refDi = 2 * Math.asin(Math.sin(51.6 * Math.PI / 180) * Math.sin(5 * Math.PI / 180));
+check("RAAN 0 -> 10 deg at i = 51.6 deg: angle between the planes [deg]", raan.di_deg, refDi * 180 / Math.PI, 1e-12);
+check("  its single-burn plane change, 2 v sin(di/2) [km/s]", dvs(raan).hohmann, 2 * Math.sqrt(O.MU / (O.RE + 500)) * Math.sin(refDi / 2), 1e-12);
+const gto = { ...base, alt1: 250, apo1: 35786, alt2: 35786 };
+const g180 = dvs({ ...gto, elements: [6, 0, 180, 0, 0, 0] });
+check("GTO i 6, argp 180 -> GEO: apse-to-apse == relative di 6 [km/s]", g180.apse, dvs({ ...gto, di_deg: 6 }).apse, 1e-12);
+{
+  const o = O.evaluate({ ...gto, elements: [6, 0, 178, 0, 0, 0] }).opts;
+  const ok = !o[0].applicable && o[1].applicable && o[1].dv > g180.apse; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] GTO i 6, argp 178 -> GEO: apse-to-apse not offered (${o[0].note}); Lambert ${o[1].dv.toFixed(6)} km/s, ` +
+              `${(1e3 * (o[1].dv - g180.apse)).toFixed(1)} m/s above the aligned case`);
+}
+// same derived geometry and results as python/odst.py: [di, w1, dw] deg, then [dv km/s, TOF s] per applicable option
+for (const [x, geo, refs] of [
+  [{ alt1: 400, alt2: 35786, elements: [51.6, 120, 0, 0, 0, 0] }, [51.60000000000001, 0, 0],
+   [[4.824649844, 19048.5625], [4.784537299, 19048.5625], [4.501603228, 920556.7324], [5.901213052, 10862.2498], [7.805548982, 15611097.9632]]],
+  [{ alt1: 250, apo1: 35786, alt2: 35786, elements: [6, 0, 178, 0, 0, 0] }, [6.000000000000001, 358, 0], [[1.496760716, 3479.8681]]],
+  [{ alt1: 400, alt2: 600, apo2: 39700, elements: [51.6, 30, 0, 63.4, 100, 270], tof_max_h: 30 }, [58.815692017167976, 0, 210.591986530302], [[4.442609368, 8948.9431]]]]) {
+  const r = O.evaluate({ ...base, ...x }), opts = r.opts.filter((o) => o.applicable);
+  const ok = Math.max(...[r.m.di_deg, r.m.w1_deg, r.m.dw_deg].map((v, i) => Math.abs(v - geo[i]))) < 1e-9 && opts.length === refs.length &&
+             opts.every((o, i) => Math.abs(o.dv - refs[i][0]) < 1e-6 && Math.abs(o.tof - refs[i][1]) < 1); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] [${x.elements}]: di ${r.m.di_deg.toFixed(6)}, w1 ${r.m.w1_deg.toFixed(6)}, dw ${r.m.dw_deg.toFixed(6)} deg ` +
+              `and ${opts.length} options as Python (dv to 1e-6 km/s, TOF to 1 s)`);
+}
+// every plan, turned into EarthMJ2000Eq and propagated, arrives on the target given by its own elements
+for (const x of [{ alt1: 400, alt2: 35786, elements: [51.6, 120, 0, 0, 0, 0] }, { alt1: 400, alt2: 35786, elements: [28.5, 0, 0, 0, 0, 0], tof_max_h: 3 },
+                 { alt1: 500, alt2: 500, elements: [51.6, 0, 0, 51.6, 10, 0] }, { alt1: 250, apo1: 35786, alt2: 35786, elements: [6, 0, 178, 0, 0, 0] },
+                 { alt1: 400, alt2: 600, apo2: 39700, elements: [51.6, 30, 0, 63.4, 100, 270], tof_max_h: 30 },
+                 { alt1: 300, apo1: 12000, alt2: 800, apo2: 20000, elements: [28.5, 10, 30, 40, 70, 120], tof_max_h: 20 }]) {
+  const m = { ...base, ...x }, r = O.evaluate(m), { P, W } = O.perifocal(...m.elements.slice(3).map((v) => v * Math.PI / 180));
+  const rp = r.r2, ra = r.ra2, p = 2 * rp * ra / (rp + ra), hn = Math.sqrt(O.MU * p);
+  for (const o of r.opts) {
+    if (!o.plan || !o.plan.length || !o.applicable) continue;
+    const ip = O.inertialPlan(m, o), sim = O.simulateVec(ip.y0, ip.plan, 3600, 200000), rv = sim.yf.slice(0, 3), v = sim.yf.slice(3), h = cross(rv, v);
+    const dh = nrm(h.map((c, i) => c - hn * W[i])) / hn;
+    const de = nrm(cross(v, h).map((c, i) => c / O.MU - rv[i] / nrm(rv) - (ra - rp) / (ra + rp) * P[i]));
+    const ok = dh < 1e-6 && de < 1e-6 && Math.abs(sim.dvUsed - o.dv) < 1e-9; fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] [${m.elements}] ${o.key}: dv ${o.dv.toFixed(6)}, arrival (RK4) vs the target's elements ` +
+                `|dh|/h=${dh.toExponential(1)} |de|=${de.toExponential(1)}`);
   }
 }
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
