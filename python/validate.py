@@ -9,9 +9,9 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import brentq, minimize_scalar
 
 from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, burns_json, evaluate,
-                  gmat_script, gravity_loss, hohmann, hohmann_optimal_split, kepler, lambert, lambert_optimal,
-                  low_thrust, one_tangent, orbit_basis, orbit_elements, orbit_state, print_table, simulate,
-                  simulate_vec, target_mismatch, vcirc, vvis)
+                  gmat_script, gravity_loss, hohmann, hohmann_optimal_split, inertial_plan, kepler, lambert,
+                  lambert_optimal, low_thrust, one_tangent, orbit_basis, orbit_elements, orbit_state, perifocal,
+                  print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 fails = 0
@@ -198,39 +198,89 @@ for _ in range(200):
     r, v = orbit_state(rp, ra, P, Q, th(E1))
     worst = max(worst, np.linalg.norm(y[:3] - r) / np.linalg.norm(r), np.linalg.norm(y[3:] - v) / np.linalg.norm(v))
 check("Kepler propagation vs Kepler's equation, 200 random arcs up to e = 0.97 [1e-12 relative]", 1e12 * worst, 0.0, 100)
-# The circular models' exact vector plans: propagated, they reach the target at the closed-form cost
+# The circular models' exact vector plans: propagated, they reach the target plane itself (normal
+# (0, -sin di, cos di)), not only its inclination, at the closed-form cost
 for m in cases + [Mission(alt1=400, alt2=400, di_deg=60), Mission(alt1=35786, alt2=400, di_deg=28.5, tof_max_h=3)]:
     for o in evaluate(m):
         if not o.burn_plan or not o.applicable:
             continue
         _, _, yf, dvsim = simulate_vec(o.y0, o.vec_plan, coast_after=3600)
-        a, e, inc = orbit_elements(yf)
-        good = abs(a - m.r2) / m.r2 < 1e-8 and e < 1e-6 and abs(inc - m.di_deg) < 1e-6 and abs(dvsim - o.dv) < 1e-12
+        dh, de = target_mismatch(yf, m.r2, m.ra2, math.radians(m.di_deg), 0.0)
+        good = dh < 1e-6 and de < 1e-6 and abs(dvsim - o.dv) < 1e-12
         fails += not good
         print(f"[{'PASS' if good else 'FAIL'}] {m.alt1:.0f}->{m.alt2:.0f} km di={m.di_deg}: {o.name:30s} vector plan "
-              f"da/a={(a - m.r2) / m.r2:.1e} e={e:.1e} di={inc - m.di_deg:.1e} deg, sum|dv| - dv={dvsim - o.dv:.1e}")
+              f"|dh|/h={dh:.1e} |de|={de:.1e}, sum|dv| - dv={dvsim - o.dv:.1e}")
 # GMAT script and JSON read back to the exact plan (GMAT flies them: gmat_crosscheck.py)
-for m in (cases[0], ell[1]):
+for m in (cases[0], ell[1], Mission(alt1=400, alt2=600, apo2=39700, elements=(51.6, 30, 0, 63.4, 100, 270), tof_max_h=30)):
     for o in evaluate(m):
         if not o.vec_plan:
             continue
         txt, js = gmat_script(m, o), json.loads(burns_json(m, o))
+        y0i, plani = inertial_plan(m, o)
         val = lambda k: float(re.search(rf"^{re.escape(k)} = (\S+);$", txt, re.M).group(1))
         plan, t = [], 0.0
         for line in txt[txt.index("BeginMissionSequence"):].splitlines():
-            if line.startswith("Propagate") and len(plan) < len(o.vec_plan):
+            if line.startswith("Propagate") and len(plan) < len(plani):
                 t += float(re.search(r"ElapsedSecs = (\S+)}", line).group(1))
             elif line.startswith("Maneuver"):
                 k = len(plan) + 1
                 plan.append((t, [val(f"Burn{k}.Element{j}") for j in (1, 2, 3)]))
         y0 = [val(f"Sat.{k}") for k in ("X", "Y", "Z", "VX", "VY", "VZ")]
         jplan = [(b["t_s"], b["dv_kms"]) for b in js["burns"]]
-        good = (val("Earth.Mu") == MU and y0 == list(o.y0) and js["start_state_km_kms"] == list(o.y0)
-                and all(abs(p[0] - q[0]) < 1e-9 * max(1.0, q[0]) and p[1] == list(q[1]) for p, q in zip(plan, o.vec_plan))
-                and jplan == [(q[0], list(q[1])) for q in o.vec_plan] and len(plan) == len(o.vec_plan))
+        good = (val("Earth.Mu") == MU and y0 == list(y0i) and js["start_state_km_kms"] == list(y0i)
+                and all(abs(p[0] - q[0]) < 1e-9 * max(1.0, q[0]) and p[1] == list(q[1]) for p, q in zip(plan, plani))
+                and jplan == [(q[0], list(q[1])) for q in plani] and len(plan) == len(plani)
+                and js["elements_deg"] == (None if m.elements is None else list(m.elements)))
         fails += not good
         print(f"[{'PASS' if good else 'FAIL'}] {o.name:32s} GMAT script and JSON give back the plan "
-              f"({len(plan)} burns, start state, Earth mu)")
+              f"({len(plan)} burns, start state, Earth mu{', elements' if m.elements else ''})")
+
+print("\n=== 5c. Orbital elements (inclination, RAAN, argument of periapsis) ===")
+dvs = lambda m: {o.key: o.dv for o in evaluate(m) if o.applicable}
+diff = lambda a, b: max(abs(a[k] - b[k]) for k in a) if a.keys() == b.keys() else math.inf
+# Elements that put the start orbit in x-y with the node on +x are the relative inputs themselves
+for rel, el in [(Mission(alt1=400, alt2=600, apo2=39700, di_deg=20, dw_deg=270), (0, 0, 0, 20, 0, 270)),
+                (Mission(alt1=250, apo1=35786, alt2=35786, di_deg=28.5), (0, 0, 0, 28.5, 0, 0))]:
+    m = Mission(alt1=rel.alt1, apo1=rel.apo1, alt2=rel.alt2, apo2=rel.apo2, elements=el)
+    check(f"Elements {el} == relative inputs, every option [km/s]", diff(dvs(m), dvs(rel)), 0.0, 1e-12)
+# Turning both orbits together (both RAANs + 40 deg) changes nothing
+c = dvs(Mission(alt1=300, apo1=12000, alt2=800, apo2=20000, elements=(28.5, 10, 30, 40, 70, 120), tof_max_h=20))
+d = dvs(Mission(alt1=300, apo1=12000, alt2=800, apo2=20000, elements=(28.5, 50, 30, 40, 110, 120), tof_max_h=20))
+check("Both orbits turned 40 deg about the pole: Lambert, 3D [km/s]", diff(c, d), 0.0, 1e-9)
+# A RAAN change alone: the planes are 2 asin(sin i sin(dRAAN/2)) apart (spherical trigonometry)
+m = Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0))
+ref = 2 * math.asin(math.sin(math.radians(51.6)) * math.sin(math.radians(5)))
+check("RAAN 0 -> 10 deg at i = 51.6 deg: angle between the planes [deg]", m.di_deg, math.degrees(ref), 1e-12)
+check("  its single-burn plane change, 2 v sin(di/2) [km/s]", dvs(m)["hohmann"], 2 * vcirc(m.r1) * math.sin(ref / 2), 1e-12)
+# GTO with its apogee on the node line equals the relative GTO; 2 deg off it, only Lambert is exact
+g = dvs(Mission(alt1=250, apo1=35786, alt2=35786, elements=(6, 0, 180, 0, 0, 0)))
+check("GTO i 6, argp 180 -> GEO: apse-to-apse == relative di 6 [km/s]", g["apse"],
+      dvs(Mission(alt1=250, apo1=35786, alt2=35786, di_deg=6))["apse"], 1e-12)
+o = evaluate(Mission(alt1=250, apo1=35786, alt2=35786, elements=(6, 0, 178, 0, 0, 0)))
+ok = not o[0].applicable and o[1].applicable and o[1].dv > g["apse"]
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] GTO i 6, argp 178 -> GEO: apse-to-apse not offered ({o[0].note}); "
+      f"Lambert {o[1].dv:.6f} km/s, {1e3 * (o[1].dv - g['apse']):.1f} m/s above the aligned case")
+# Every plan, turned into EarthMJ2000Eq and propagated, arrives on the target given by its own elements
+for m in (Mission(alt1=400, alt2=35786, elements=(51.6, 120, 0, 0, 0, 0)),
+          Mission(alt1=400, alt2=35786, elements=(28.5, 0, 0, 0, 0, 0), tof_max_h=3),
+          Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0)),
+          Mission(alt1=250, apo1=35786, alt2=35786, elements=(6, 0, 178, 0, 0, 0)),
+          Mission(alt1=400, alt2=600, apo2=39700, elements=(51.6, 30, 0, 63.4, 100, 270), tof_max_h=30),
+          Mission(alt1=300, apo1=12000, alt2=800, apo2=20000, elements=(28.5, 10, 30, 40, 70, 120), tof_max_h=20)):
+    P2, _, W2 = perifocal(*map(math.radians, m.elements[3:]))
+    for o in evaluate(m):
+        if not o.vec_plan or not o.applicable:
+            continue
+        _, _, yf, dvsim = simulate_vec(*inertial_plan(m, o), coast_after=3600)
+        r, v = yf[:3], yf[3:]
+        h, p = np.cross(r, v), 2 * m.r2 * m.ra2 / (m.r2 + m.ra2)
+        dh = np.linalg.norm(h - math.sqrt(MU * p) * W2) / math.sqrt(MU * p)
+        de = np.linalg.norm(np.cross(v, h) / MU - r / np.linalg.norm(r) - (m.ra2 - m.r2) / (m.ra2 + m.r2) * P2)
+        good = dh < 1e-6 and de < 1e-6 and abs(dvsim - o.dv) < 1e-9
+        fails += not good
+        print(f"[{'PASS' if good else 'FAIL'}] {str(m.elements):32s} {o.name:32s} dv={o.dv:.6f}  arrival vs the "
+              f"target's elements |dh|/h={dh:.1e} |de|={de:.1e}")
 
 print("\n=== 6. Mission case studies ===")
 for m in cases + ell:

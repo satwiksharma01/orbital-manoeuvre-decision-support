@@ -50,8 +50,8 @@ class Mission:
     alt2: float = 35786.0        # target altitude (periapsis if elliptical), km
     apo1: float | None = None    # initial apoapsis altitude, km; None = circular
     apo2: float | None = None    # target apoapsis altitude, km; None = circular
-    dw_deg: float = 0.0          # target apse line, deg from the start orbit's periapsis
-    di_deg: float = 28.5         # inclination change, deg
+    dw_deg: float = 0.0          # target periapsis, deg from the node line (the start periapsis if w1_deg = 0)
+    di_deg: float = 28.5         # inclination change (angle between the orbit planes), deg
     dv_budget: float = 6.5       # km/s
     margin_pct: float = 5.0      # Δv margin the budget must also cover, %
     tof_max_h: float = 24.0 * 200  # hours
@@ -63,6 +63,13 @@ class Mission:
     rb_max: float = 384400.0     # bi-elliptic apoapsis upper bound, km (lunar distance)
     k_one_tangent: float = 1.5   # one-tangent transfer apsis factor (default)
     weights: tuple = WEIGHT_PRESETS["Balanced"]
+    w1_deg: float = 0.0          # start periapsis, deg from the node line
+    elements: tuple | None = None  # (i1, RAAN1, argp1, i2, RAAN2, argp2), deg; sets di_deg, w1_deg, dw_deg
+    R: object = field(default=None, init=False, repr=False, compare=False)  # relative frame -> EarthMJ2000Eq
+
+    def __post_init__(self):
+        if self.elements is not None:
+            self.di_deg, self.w1_deg, self.dw_deg, self.R = relative_geometry(self)
 
     @property
     def r1(self):
@@ -248,10 +255,11 @@ def low_thrust(r1, r2, di, accel_ms2):
 
 
 # ------------------------------------------- elliptical orbits and Lambert
-# Frame: the start orbit lies in the x-y plane with its periapsis on +x. The target
-# plane is turned by di about +x (the node line is the start orbit's apse line) and
-# the target periapsis sits dw from +x inside that plane. Burns are vectors here, so
-# these plans are (t, dv_vec) rows with the start state y0, not the circular format.
+# Relative frame: the start orbit lies in the x-y plane and +x is the node line, where the
+# target crosses that plane going north (+z). The target plane is turned by di about +x.
+# Each periapsis is measured from +x in its own plane: w1 for the start orbit (0 unless
+# set from orbital elements), dw for the target. Burns are vectors here, so these plans
+# are (t, dv_vec) rows with the start state y0, not the circular format.
 ELL_TOL = 1e-6          # km: apoapsis - periapsis below this is a circular orbit
 DV_ZERO = 1e-9          # km/s: burns smaller than this are dropped
 H_ARC_MIN = 100.0       # km: a Lambert transfer arc may not pass below this altitude
@@ -267,6 +275,30 @@ def orbit_basis(di, dw):
     di about +x with periapsis dw from +x."""
     x, y = np.array([1.0, 0.0, 0.0]), np.array([0.0, math.cos(di), math.sin(di)])
     return math.cos(dw) * x + math.sin(dw) * y, -math.sin(dw) * x + math.cos(dw) * y
+
+
+def perifocal(inc, raan, argp):
+    """Unit vectors to periapsis (P), 90 deg ahead of it (Q) and along the orbit normal (W)
+    in EarthMJ2000Eq, from inclination, RAAN and argument of periapsis (rad)."""
+    ci, si, cO, sO, cw, sw = math.cos(inc), math.sin(inc), math.cos(raan), math.sin(raan), math.cos(argp), math.sin(argp)
+    return (np.array([cO * cw - sO * sw * ci, sO * cw + cO * sw * ci, sw * si]),
+            np.array([-cO * sw - sO * cw * ci, -sO * sw + cO * cw * ci, cw * si]),
+            np.array([sO * si, -cO * si, ci]))
+
+
+def relative_geometry(m):
+    """(di_deg, w1_deg, dw_deg, R) for a mission given by orbital elements: the angle between
+    the planes, each periapsis from the node line, and R, whose columns are the relative
+    frame's axes in EarthMJ2000Eq. Coplanar orbits have no node line, so the start periapsis
+    takes its place; a circular orbit's periapsis is put on the node line."""
+    P1, _, W1 = perifocal(*map(math.radians, m.elements[:3]))
+    P2, _, W2 = perifocal(*map(math.radians, m.elements[3:]))
+    n = np.cross(W1, W2)
+    x = n / np.linalg.norm(n) if np.linalg.norm(n) > 1e-9 else P1
+    y, y2 = np.cross(W1, x), np.cross(W2, x)                  # 90 deg ahead of +x in each plane
+    ang = lambda P, yy, circ: 0.0 if circ else round(math.degrees(math.atan2(P @ yy, P @ x)), 12) % 360   # -1e-16 -> 0, not 360
+    return (math.degrees(math.atan2(np.linalg.norm(n), W1 @ W2)), ang(P1, y, m.ra1 - m.r1 < ELL_TOL),
+            ang(P2, y2, m.ra2 - m.r2 < ELL_TOL), np.column_stack([x, y, W1]))
 
 
 def orbit_radius(rp, ra, th):
@@ -356,23 +388,24 @@ def lambert(r1v, r2v, dt):
     return (r2v - f * r1v) / g, (gdot * r2v - r1v) / g
 
 
-def apse_transfer(rp1, ra1, rp2, ra2, di, dw):
+def apse_transfer(rp1, ra1, rp2, ra2, di, dw, w1=0.0):
     """Two-impulse transfer from an apsis of the start orbit to the opposite direction
     on the target orbit, with the plane change split optimally between the burns.
     Returns (dict, "") or (None, reason)."""
     circ1, circ2 = ra1 - rp1 < ELL_TOL, ra2 - rp2 < ELL_TOL
-    if not (circ1 or circ2 or _on_node_line(dw)):
-        return None, "apse lines not aligned (Δω must be 0° or 180°)"
-    dirs = [dw, dw + math.pi] if circ1 and not circ2 else [0.0, math.pi]
+    w1 = 0.0 if circ1 else w1                     # a circular orbit has no periapsis to place
+    if not (circ1 or circ2 or _on_node_line(dw - w1)):
+        return None, f"apse lines {math.degrees((dw - w1) % (2 * math.pi)):g}° apart, not 0° or 180°"
+    dirs = [dw, dw + math.pi] if circ1 and not circ2 else [w1, w1 + math.pi]   # departure, from +x
     if di > 0 and not all(_on_node_line(d) for d in dirs):
-        return None, "a plane change needs both burns on the node line (Δω must be 0° or 180°)"
-    P1, Q1 = orbit_basis(0.0, 0.0)
+        return None, "a plane change needs both burns on the node line, and the apse line isn't on it"
+    P1, Q1 = orbit_basis(0.0, w1)
     P2, Q2 = orbit_basis(di, dw)
     a1, a2 = (rp1 + ra1) / 2, (rp2 + ra2) / 2
     best = None
     for phi in dirs:
         th2 = phi + math.pi - dw
-        rA, rB = orbit_radius(rp1, ra1, phi), orbit_radius(rp2, ra2, th2)
+        rA, rB = orbit_radius(rp1, ra1, phi - w1), orbit_radius(rp2, ra2, th2)
         at = (rA + rB) / 2
         v1, vtA, vtB, v2 = vvis(rA, a1), vvis(rA, at), vvis(rB, at), vvis(rB, a2)
         cost = lambda s: combined_burn(v1, vtA, s * di) + combined_burn(vtB, v2, (1 - s) * di)
@@ -387,7 +420,7 @@ def apse_transfer(rp1, ra1, rp2, ra2, di, dw):
     dv1, dv2 = combined_burn(v1, vtA, s * di), combined_burn(vtB, v2, (1 - s) * di)
     Rt = np.array([[1, 0, 0], [0, math.cos(s * di), -math.sin(s * di)], [0, math.sin(s * di), math.cos(s * di)]])
     along = lambda ang: Rt @ np.array([-math.sin(ang), math.cos(ang), 0.0])
-    r1v, v1v = orbit_state(rp1, ra1, P1, Q1, phi)
+    r1v, v1v = orbit_state(rp1, ra1, P1, Q1, phi - w1)
     rBv = Rt @ np.array([rB * math.cos(phi + math.pi), rB * math.sin(phi + math.pi), 0.0])
     vB = vtB * along(phi + math.pi)
     dv1v = vtA * along(phi) - v1v
@@ -401,7 +434,7 @@ def apse_transfer(rp1, ra1, rp2, ra2, di, dw):
     else:                                         # the first burn lands on the target orbit
         y0, plan, legs, tof = np.concatenate([r1v, v1v]), [(0.0, dv1v)] if keep1 else [], [(rA, dv1)] if keep1 else [], 0.0
     return {"dv": dv1 * keep1 + dv2 * keep2, "tof": tof, "burns": len(plan), "y0": y0, "plan": plan,
-            "legs": legs, "split_at_dep": s, "depart_deg": math.degrees(phi) % 360,
+            "legs": legs, "split_at_dep": s, "depart_deg": math.degrees(phi - w1) % 360,
             "rA": rA, "rB": rB}, ""
 
 
@@ -437,7 +470,7 @@ def _nelder_mead(f, x0, steps, iters=400, tol=1e-12):
     return pts[i], vals[i]
 
 
-def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
+def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16, w1=0.0):
     """Minimum-dv two-impulse Lambert transfer over departure true anomaly, arrival true
     anomaly and transfer time (60 s to min(tof_max, the longer orbital period)).
     Transfers within 0.5 deg of 0 or 180 deg are skipped: there the transfer plane is
@@ -447,7 +480,7 @@ def lambert_optimal(rp1, ra1, rp2, ra2, di, dw, tof_max, n_grid=16):
     a wall stops Nelder-Mead short of the boundary (46 m/s high on a floor-active case in the
     2026-10-22 audit). The search uses K_SEARCH and the final polish K_POLISH, so the result
     sits on or above the floor; a result still below it is rejected."""
-    P1, Q1 = orbit_basis(0.0, 0.0)
+    P1, Q1 = orbit_basis(0.0, w1)
     P2, Q2 = orbit_basis(di, dw)
     tmin = 60.0
     tmax = min(tof_max, max(2 * math.pi * math.sqrt(((rp + ra) / 2) ** 3 / MU) for rp, ra in ((rp1, ra1), (rp2, ra2))))
@@ -528,7 +561,7 @@ def evaluate(m: Mission):
     for o in opts:
         if o.burn_plan:
             o.legs = [(b[3], b[4]) for b in o.burn_plan]
-            o.y0, o.vec_plan = circular_vec_plan(m.r1, o.burn_plan)
+            o.y0, o.vec_plan = circular_vec_plan(m.r1, o.burn_plan, math.radians(m.di_deg))
         if o.legs:
             o.dv_loss = gravity_loss(o.legs, o.isp, m.tw_chem)
         # the propellant also pays for the finite-burn loss, as the budget check does
@@ -543,9 +576,9 @@ def _elliptical_options(m: Mission):
     elliptical mission is sized with the apse-to-apse and Lambert models only."""
     if m.apo1 is not None and m.apo1 < m.alt1 or m.apo2 is not None and m.apo2 < m.alt2:
         raise ValueError("apoapsis altitude below periapsis altitude")
-    di, dw = math.radians(m.di_deg), math.radians(m.dw_deg)
+    di, dw, w1 = math.radians(m.di_deg), math.radians(m.dw_deg), math.radians(m.w1_deg)
     opts = []
-    res, why = apse_transfer(m.r1, m.ra1, m.r2, m.ra2, di, dw)
+    res, why = apse_transfer(m.r1, m.ra1, m.r2, m.ra2, di, dw, w1)
     o = Option("apse", "Apse-to-apse (optimal Δi split)", res["dv"] if res else math.nan, res["tof"] if res else math.nan,
                res["burns"] if res else 0, m.isp_chem, COMPLEXITY["apse"])
     if res:
@@ -554,7 +587,7 @@ def _elliptical_options(m: Mission):
     else:
         o.applicable, o.note = False, why
     opts.append(o)
-    res = lambert_optimal(m.r1, m.ra1, m.r2, m.ra2, di, dw, m.tof_max_h * 3600.0)
+    res = lambert_optimal(m.r1, m.ra1, m.r2, m.ra2, di, dw, m.tof_max_h * 3600.0, w1=w1)
     o = Option("lambert", "Lambert (minimum Δv)", res["dv"] if res else math.nan, res["tof"] if res else math.nan,
                2, m.isp_chem, COMPLEXITY["lambert"])
     if res:
@@ -646,10 +679,11 @@ def rule_advice(m: Mission):
     if m.elliptical:
         adv = ["Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume circular "
                "orbits, so the apse-to-apse and Lambert transfers are sized instead."]
-        if apse_transfer(m.r1, m.ra1, m.r2, m.ra2, math.radians(m.di_deg), math.radians(m.dw_deg))[0]:
+        res, why = apse_transfer(m.r1, m.ra1, m.r2, m.ra2, *map(math.radians, (m.di_deg, m.dw_deg, m.w1_deg)))
+        if res:
             adv.append("Apse lines aligned: a transfer between apsides is available, usually the cheapest.")
         else:
-            adv.append(f"Apse lines {m.dw_deg:g}° apart: only a Lambert transfer is offered.")
+            adv.append(f"No apse-to-apse transfer: {why}. Only a Lambert transfer is offered.")
         return adv
     r1, r2 = m.r1, m.r2
     R = max(r1, r2) / min(r1, r2)
@@ -722,13 +756,14 @@ def _rotate(v, axis, ang):
     return v * math.cos(ang) + np.cross(k, v) * math.sin(ang) + k * np.dot(k, v) * (1 - math.cos(ang))
 
 
-def _circular_burn(r, v, vafter, dinc):
+def _circular_burn(r, v, vafter, dinc, toward=None):
     """Velocity after a circular-model burn: speed vafter perpendicular to r, plane turned by
-    dinc about r in the sense that increases inclination w.r.t. the initial plane (keeps split
-    plane changes additive)."""
+    dinc about r toward the plane with normal `toward`, or, without one, in the sense that
+    increases inclination w.r.t. the initial plane (keeps split plane changes additive)."""
     h = np.cross(r, v)
     nh = h / np.linalg.norm(h)
-    n_new = min([_rotate(nh, r, dinc), _rotate(nh, r, -dinc)], key=lambda n: n[2])
+    key = (lambda n: n[2]) if toward is None else (lambda n: -(n @ toward))
+    n_new = min([_rotate(nh, r, dinc), _rotate(nh, r, -dinc)], key=key)
     return vafter * np.cross(n_new, r / np.linalg.norm(r))
 
 
@@ -756,15 +791,27 @@ def kepler(y, dt):
     return np.concatenate([rv, sq / (r * r0) * x * (z * S - 1) * r0v + (1 - x * x / r * C) * v0v])
 
 
-def circular_vec_plan(r1, plan):
-    """A circular model's burn plan as (y0, [(t, dv_vec)]): the burns of simulate(), with the
-    coasts solved analytically (kepler) instead of integrated, so the plan is exact."""
-    y = np.array([r1, 0, 0, 0, vcirc(r1), 0.0])
+def circular_vec_plan(r1, plan, di):
+    """A circular model's burn plan as (y0, [(t, dv_vec)]) in the relative frame: the burns of
+    simulate(), with the coasts solved analytically (kepler) instead of integrated, so the plan
+    is exact. Plane changes turn toward the target plane, normal (0, -sin di, cos di), and must
+    happen on the node line (x): if the first one wouldn't (a raising one-tangent transfer
+    changes plane on arrival), the start point is moved back so that it does."""
+    y, t0, phi = np.array([r1, 0, 0, 0, vcirc(r1), 0.0]), 0.0, 0.0
+    for tb, vafter, dinc, *_ in plan:                  # in the start plane up to the first plane change
+        if tb > t0:
+            y, t0 = kepler(y, tb - t0), tb
+        if dinc:
+            phi = 0.0 if _on_node_line(math.atan2(y[1], y[0])) else math.atan2(y[1], y[0])
+            break
+        y[3:] = vafter * np.cross([0.0, 0.0, 1.0], y[:3] / np.linalg.norm(y[:3]))
+    c, s, v1 = math.cos(phi), math.sin(phi), vcirc(r1)
+    y, toward = np.array([r1 * c, -r1 * s, 0, v1 * s, v1 * c, 0.0]), np.array([0.0, -math.sin(di), math.cos(di)])
     y0, t0, out = y.copy(), 0.0, []
     for tb, vafter, dinc, *_ in plan:
         if tb > t0:
             y = kepler(y, tb - t0)
-        vnew = _circular_burn(y[:3], y[3:], vafter, dinc)
+        vnew = _circular_burn(y[:3], y[3:], vafter, dinc, toward)
         out.append((tb, vnew - y[3:]))
         y, t0 = np.concatenate([y[:3], vnew]), tb
     return y0, out
@@ -837,7 +884,17 @@ def orbit_elements(y):
 
 # ------------------------------------------------------------------- export
 GMAT_EPOCH = "01 Jan 2026 12:00:00.000"   # UTC; arbitrary, as the tool has no timing model yet
-FRAME = "EarthMJ2000Eq, start orbit in the X-Y plane with its periapsis on +X"
+
+
+def _frame(m):
+    return ("EarthMJ2000Eq, orbits from the elements entered" if m.R is not None else
+            "EarthMJ2000Eq, the tool's frame: start orbit in the X-Y plane, node line on +X")
+
+
+def inertial_plan(m, o):
+    """Option o's start state and burns in EarthMJ2000Eq: the relative frame turned by m.R."""
+    R = np.eye(3) if m.R is None else m.R
+    return (np.concatenate([R @ o.y0[:3], R @ o.y0[3:]]), [(t, R @ dv) for t, dv in o.vec_plan])
 
 
 def _num(x):
@@ -853,35 +910,42 @@ def gmat_script(m: Mission, o: Option, report="odst_arrival.txt"):
     and reports the orbit it arrives on (same physics as the tool: point-mass Earth)."""
     g = lambda x: repr(_num(x))
     (p1, a1), (p2, a2) = _alts(m)
+    y0, plan = inertial_plan(m, o)
+    if m.R is None:
+        orbits = [f"% Start orbit {p1:g} x {a1:g} km altitude; target {p2:g} x {a2:g} km, di {m.di_deg:g} deg, dw {m.dw_deg:g} deg"]
+    else:
+        e = m.elements
+        orbits = [f"% Start orbit {p1:g} x {a1:g} km altitude, i {e[0]:g} deg, RAAN {e[1]:g} deg, argp {e[2]:g} deg",
+                  f"% Target orbit {p2:g} x {a2:g} km altitude, i {e[3]:g} deg, RAAN {e[4]:g} deg, argp {e[5]:g} deg; "
+                  f"planes {m.di_deg:.4g} deg apart"]
     s = ["% Orbital Manoeuvre Decision Support Tool: GMAT export",
-         f"% Transfer: {o.name.replace('Δ', 'd')}, {len(o.vec_plan)} burn(s), total dv {o.dv:.4f} km/s "
-         f"(impulsive), flight time {o.tof / 3600:.2f} h",
-         f"% Start orbit {p1:g} x {a1:g} km altitude; target {p2:g} x {a2:g} km, di {m.di_deg:g} deg, dw {m.dw_deg:g} deg",
-         f"% Frame: {FRAME}, as in the tool.",
-         "%   The epoch is arbitrary: the tool has no timing model yet.",
+         f"% Transfer: {o.name.replace('Δ', 'd')}, {len(plan)} burn(s), total dv {o.dv:.4f} km/s "
+         f"(impulsive), flight time {o.tof / 3600:.2f} h", *orbits,
+         f"% Frame: {_frame(m)}.",
+         "%   The epoch is arbitrary: the tool has no timing model yet, so Sat starts at the departure point.",
          "% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
          "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies.",
          "", "% GMAT's default is 398600.4415, enough to shift a 10-day transfer's arrival by 0.2 km",
          f"Earth.Mu = {MU!r};", "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", f"Sat.Epoch = '{GMAT_EPOCH}';",
          "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;"]
-    s += [f"Sat.{k} = {g(x)};" for k, x in zip(("X", "Y", "Z", "VX", "VY", "VZ"), o.y0)]
+    s += [f"Sat.{k} = {g(x)};" for k, x in zip(("X", "Y", "Z", "VX", "VY", "VZ"), y0)]
     s += ["", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
           "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
           "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"]
-    for k, (_, dv) in enumerate(o.vec_plan, 1):
+    for k, (_, dv) in enumerate(plan, 1):
         s += ["", f"Create ImpulsiveBurn Burn{k};", f"Burn{k}.CoordinateSystem = EarthMJ2000Eq;"]
         s += [f"Burn{k}.Element{j + 1} = {g(dv[j])};" for j in range(3)]
     s += ["", "Create ReportFile Arrival;", f"Arrival.Filename = '{report}';", "Arrival.Precision = 16;",
           "Arrival.WriteHeaders = true;", "", "Create OrbitView View;", "View.Add = {Sat, Earth};",
           "", "BeginMissionSequence;"]
     t = 0.0
-    for k, (tb, _) in enumerate(o.vec_plan, 1):
+    for k, (tb, _) in enumerate(plan, 1):
         if tb > t:
             s.append(f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {g(tb - t)}}};")
         s.append(f"Maneuver Burn{k}(Sat);")
         t = tb
     s += ["Report Arrival " + " ".join(f"Sat.EarthMJ2000Eq.{k}" for k in ("X", "Y", "Z", "VX", "VY", "VZ"))
-          + " Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;",
+          + " Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP;",
           f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {g(2 * math.pi * math.sqrt(((m.r2 + m.ra2) / 2) ** 3 / MU))}}};"]
     return "\n".join(s) + "\n"
 
@@ -889,13 +953,15 @@ def gmat_script(m: Mission, o: Option, report="odst_arrival.txt"):
 def burns_json(m: Mission, o: Option):
     """Option o's burn plan as JSON: the start state, then each burn's time and inertial dv."""
     (p1, a1), (p2, a2) = _alts(m)
+    y0, plan = inertial_plan(m, o)
     return json.dumps({
         "tool": "Orbital Manoeuvre Decision Support Tool", "transfer": o.name, "dv_kms": o.dv, "tof_s": o.tof,
         "start_orbit_alt_km": [p1, a1], "target_orbit_alt_km": [p2, a2], "di_deg": m.di_deg, "dw_deg": m.dw_deg,
-        "frame": FRAME, "epoch_utc": GMAT_EPOCH, "mu_km3_s2": MU,
-        "start_state_km_kms": [_num(x) for x in o.y0],
+        "w1_deg": m.w1_deg, "elements_deg": None if m.elements is None else [_num(x) for x in m.elements],
+        "frame": _frame(m), "epoch_utc": GMAT_EPOCH, "mu_km3_s2": MU,
+        "start_state_km_kms": [_num(x) for x in y0],
         "burns": [{"t_s": _num(t), "dv_kms": [_num(x) for x in dv], "dv_mag_kms": _num(np.linalg.norm(dv))}
-                  for t, dv in o.vec_plan]}, indent=2, ensure_ascii=False) + "\n"
+                  for t, dv in plan]}, indent=2, ensure_ascii=False) + "\n"
 
 
 # ------------------------------------------------------------------- report

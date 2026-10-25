@@ -3,7 +3,9 @@
 1. GMAT's differential corrector solves the same Hohmann transfers that odst.py sizes
    analytically, and the GTO -> GEO apogee burn of the apse-to-apse model.
 2. GMAT runs the scripts the tool exports (odst.gmat_script) for every impulsive option of
-   circular and elliptical missions, and the orbit it arrives on is compared with the target.
+   circular and elliptical missions, some given by orbital elements, and the orbit it arrives
+   on is compared with the target: its angular-momentum and eccentricity vectors in
+   EarthMJ2000Eq, so the plane and the apse line count, not only the shape.
 
 Needs a local GMAT (https://sourceforge.net/projects/gmat/). Not run in CI.
 Run: python python/gmat_crosscheck.py [path/to/GmatConsole.exe]
@@ -17,7 +19,9 @@ import tempfile
 from pathlib import Path
 from string import Template
 
-from odst import RE, Mission, evaluate, gmat_script, hohmann, target_mismatch, vcirc, vvis
+import numpy as np
+
+from odst import MU, RE, Mission, evaluate, gmat_script, hohmann, orbit_basis, perifocal, vcirc, vvis
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = Path(__file__).resolve().parent
@@ -36,6 +40,19 @@ ELLIPTICAL = [Mission(alt1=250, apo1=35786, alt2=35786, di_deg=28.5),           
               Mission(alt1=400, alt2=600, apo2=39700, dw_deg=270, di_deg=0),            # LEO -> Molniya
               Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=0),  # apse lines 60 deg apart
               Mission(alt1=500, apo1=5000, alt2=800, apo2=12000, dw_deg=60, di_deg=10)]
+ELEMENTS = [Mission(alt1=400, alt2=35786, elements=(51.6, 120, 0, 0, 0, 0)),                   # 51.6 deg LEO -> GEO
+            Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0)),                   # RAAN change only
+            Mission(alt1=250, apo1=35786, alt2=35786, elements=(6, 0, 178, 0, 0, 0)),          # GTO, apogee off the node
+            Mission(alt1=400, alt2=600, apo2=39700, elements=(51.6, 30, 0, 63.4, 100, 270), tof_max_h=30)]
+
+
+def target_vectors(m):
+    """The target's unit vectors to periapsis and along its normal in EarthMJ2000Eq."""
+    if m.elements is not None:
+        P, _, W = perifocal(*map(math.radians, m.elements[3:]))
+        return P, W
+    P, Q = orbit_basis(math.radians(m.di_deg), math.radians(m.dw_deg))
+    return P, np.cross(P, Q)
 
 
 def gmat(console, make_script):
@@ -109,22 +126,25 @@ def main():
         report(abs(g - apse.dv) < 1e-6, "apse-to-apse apogee burn within 1 mm/s")
 
     print("\n=== 2. GMAT runs the exported scripts; arrival vs target orbit ===")
-    for m in CIRCULAR + ELLIPTICAL:
+    for m in CIRCULAR + ELLIPTICAL + ELEMENTS:
+        P, W = target_vectors(m)
+        p, ecc = 2 * m.r2 * m.ra2 / (m.r2 + m.ra2), (m.ra2 - m.r2) / (m.ra2 + m.r2)
         for o in evaluate(m):
             if not o.vec_plan or not o.applicable:
                 continue
             g = gmat(console, lambda rep: gmat_script(m, o, rep))
-            name = (f"{m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f}x{m.ra2 - RE:.0f} km di={m.di_deg:g} "
-                    f"dw={m.dw_deg:g}: {o.name:36s}")
+            orbits = (f"elements {m.elements}" if m.elements else
+                      f"{m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f}x{m.ra2 - RE:.0f} km di={m.di_deg:g} dw={m.dw_deg:g}")
+            name = f"{orbits}: {o.name:36s}"
             if g is None:
                 report(False, f"{name} GMAT run failed")
-            elif m.elliptical:
-                dh, de = target_mismatch(g[:6], m.r2, m.ra2, math.radians(m.di_deg), math.radians(m.dw_deg))
-                report(dh < 1e-6 and de < 1e-6, f"{name} |dh|/h = {dh:.1e}, |de| = {de:.1e}")
-            else:             # circular target: its node line depends on the transfer, so compare a, e, i
-                da, di = (g[6] - m.r2) / m.r2, g[8] - m.di_deg
-                report(abs(da) < 1e-6 and g[7] < 1e-6 and abs(di) < 1e-6,
-                       f"{name} da/a = {da:.1e}, e = {g[7]:.1e}, di = {di:.1e} deg")
+                continue
+            r, v = np.array(g[:3]), np.array(g[3:6])
+            h = np.cross(r, v)
+            dh = np.linalg.norm(h - math.sqrt(MU * p) * W) / math.sqrt(MU * p)
+            de = np.linalg.norm(np.cross(v, h) / MU - r / np.linalg.norm(r) - ecc * P)
+            gm = f"; GMAT i {g[8]:.6f}, RAAN {g[9]:.6f}" if m.elements else ""
+            report(dh < 1e-6 and de < 1e-6, f"{name} |dh|/h = {dh:.1e}, |de| = {de:.1e}{gm}")
     print(f"\n{'ALL CHECKS PASSED' if not fails else f'{fails} CHECK(S) FAILED'}")
     sys.exit(fails)
 
