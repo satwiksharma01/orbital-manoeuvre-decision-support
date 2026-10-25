@@ -4,6 +4,11 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- **Result figures:** the case A and B bars were regenerated, so their propellant fractions include the gravity loss (finding 9). The decision map came out identical.
+- **Repository:** removed an unused screenshot and the backup copy Simulink kept when it upgraded the model; `*.slx.r20*` is now ignored.
+
 ## [1.0.0] - 2026-10-24
 
 The first tagged release: the decision-support tool in MATLAB/Simulink, Python and the web, for circular and elliptical orbits, checked against textbooks, numerical propagation, NASA GMAT and each other.
