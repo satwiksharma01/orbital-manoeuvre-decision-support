@@ -211,6 +211,9 @@ summary .group-title { justify-content: flex-start; gap: 6px; }
 @media (max-width: 1180px) { .pair { grid-template-columns: minmax(0, 1fr); } }
 .fig { position: relative; display: grid; gap: 6px; padding-bottom: 14px; }
 .fig svg { display: block; width: 100%; height: auto; overflow: visible; padding-inline: 14px; }
+.export { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 22px 4px; font-size: 13px; color: var(--label-2); }
+.export span { margin-right: 4px; }
+.chip:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 svg text { font-family: var(--font); font-variant-numeric: tabular-nums; }
 .dot { cursor: pointer; outline: none; }
 .dot .mark { transition: r 0.2s ease, fill 0.2s ease, stroke 0.2s ease; }
@@ -385,6 +388,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <section class="card fig">
           <div class="card-head"><h3 id="geoTitle">Transfer geometry</h3><p id="geoSub"></p></div>
           <svg id="geo" viewBox="0 0 360 330" role="img" aria-label="Transfer orbit diagram"></svg>
+          <div class="export"><span id="exLabel">Download</span>
+            <button type="button" class="chip" id="exGmat" title="A NASA GMAT script that flies this transfer">GMAT script</button>
+            <button type="button" class="chip" id="exJson" title="Burn times and inertial Δv vectors">Burns (JSON)</button></div>
         </section>
       </div>
 
@@ -447,12 +453,13 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
 
   // ------------------------------------------------------------ manoeuvres
+  // cplan: the circular models' burn plan [[t, speed after, plane rotation], ...] (circularVecPlan)
   function hohmann(r1, r2, di, split) {
     if (split == null) split = r2 >= r1 ? 0 : 1;
-    if (Math.abs(r2 - r1) < 1e-6) { const dv = 2 * vc(r1) * Math.sin(di / 2); return { dv, tof: 0, burns: 1, split, legs: [[r1, dv]] }; }
-    const a = (r1 + r2) / 2;
+    if (Math.abs(r2 - r1) < 1e-6) { const dv = 2 * vc(r1) * Math.sin(di / 2); return { dv, tof: 0, burns: 1, split, legs: [[r1, dv]], cplan: [[0, vc(r1), di]] }; }
+    const a = (r1 + r2) / 2, tof = Math.PI * Math.sqrt(a ** 3 / MU);
     const dv1 = comb(vc(r1), vv(r1, a), split * di), dv2 = comb(vv(r2, a), vc(r2), (1 - split) * di);
-    return { dv: dv1 + dv2, tof: Math.PI * Math.sqrt(a ** 3 / MU), burns: 2, split, legs: [[r1, dv1], [r2, dv2]] };
+    return { dv: dv1 + dv2, tof, burns: 2, split, legs: [[r1, dv1], [r2, dv2]], cplan: [[0, vv(r1, a), split * di], [tof, vc(r2), (1 - split) * di]] };
   }
   function hohmannSplitOpt(r1, r2, di) {
     if (di <= 0 || Math.abs(r2 - r1) < 1e-6) return r2 >= r1 ? 0 : 1;
@@ -461,7 +468,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   function bielliptic(r1, r2, rb, di) {
     const a1 = (r1 + rb) / 2, a2 = (r2 + rb) / 2;
     const dv1 = Math.abs(vv(r1, a1) - vc(r1)), dv2 = comb(vv(rb, a1), vv(rb, a2), di), dv3 = Math.abs(vv(r2, a2) - vc(r2));
-    return { dv: dv1 + dv2 + dv3, tof: Math.PI * (Math.sqrt(a1 ** 3 / MU) + Math.sqrt(a2 ** 3 / MU)), burns: 3, rb, legs: [[r1, dv1], [rb, dv2], [r2, dv3]] };
+    const t1 = Math.PI * Math.sqrt(a1 ** 3 / MU), t2 = Math.PI * Math.sqrt(a2 ** 3 / MU);
+    return { dv: dv1 + dv2 + dv3, tof: t1 + t2, burns: 3, rb, legs: [[r1, dv1], [rb, dv2], [r2, dv3]],
+             cplan: [[0, vv(r1, a1), 0], [t1, vv(rb, a2), di], [t1 + t2, vc(r2), 0]] };
   }
   function bieOpt(r1, r2, di, rbmax, tofmax) {
     const rlo = Math.max(r1, r2) * (1 + 1e-9);
@@ -497,7 +506,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       tof = Math.PI * Math.sqrt(a ** 3 / MU) - tPeri;
       dv1 = comb(v1, vt1, di); dv2 = Math.sqrt(Math.max(vt2 ** 2 + v2 ** 2 - 2 * vt2 * v2 * Math.cos(phi), 0));
     }
-    return { dv: dv1 + dv2, tof, burns: 2, e, nu, phi, k, raising, rp, ra, legs: [[r1, dv1], [r2, dv2]] };
+    return { dv: dv1 + dv2, tof, burns: 2, e, nu, phi, k, raising, rp, ra, legs: [[r1, dv1], [r2, dv2]],
+             cplan: raising ? [[0, vt1, 0], [tof, v2, di]] : [[0, vt1, di], [tof, v2, 0]] };
   }
   function oneTangentForTof(r1, r2, di, target, kmax = 50) {
     const f = (k) => oneTangent(r1, r2, k, di).tof - target, k0 = 1 + 1e-9;
@@ -560,6 +570,43 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
   // Single-revolution prograde Lambert problem (angular momentum along +z), universal
   // variables (Curtis Algorithm 5.2) with bisection on z. Returns [v1, v2] or null.
+  // Two-body state dt seconds after state y: the universal-variable Kepler equation solved by
+  // Newton, then Lagrange f and g (Curtis, Algorithms 3.3 and 3.4), as kepler in odst.py.
+  function kepler(y, dt) {
+    const r0v = y.slice(0, 3), v0v = y.slice(3), r0 = norm(r0v), sq = Math.sqrt(MU);
+    const vr0 = dot(r0v, v0v) / r0, alpha = 2 / r0 - dot(v0v, v0v) / MU;
+    let x = sq * Math.abs(alpha) * dt;
+    for (let it = 0; ; it++) {
+      if (it === 100) throw new Error("kepler: Newton did not converge");
+      const z = alpha * x * x, [C, S] = stumpff(z);
+      const F = r0 * vr0 / sq * x * x * C + (1 - alpha * r0) * x ** 3 * S + r0 * x - sq * dt;
+      const dx = F / (r0 * vr0 / sq * x * (1 - z * S) + (1 - alpha * r0) * x * x * C + r0);
+      x -= dx;
+      if (Math.abs(dx) < 1e-12 * Math.max(1, Math.abs(x))) break;
+    }
+    const z = alpha * x * x, [C, S] = stumpff(z);
+    const rv = add3(mul3(1 - x * x / r0 * C, r0v), mul3(dt - x ** 3 * S / sq, v0v)), r = norm(rv);
+    return [...rv, ...add3(mul3(sq / (r * r0) * x * (z * S - 1), r0v), mul3(1 - x * x / r * C, v0v))];
+  }
+  // A circular model's cplan as an exact vector plan from (r1, 0, 0): the burns of simulate() in
+  // odst.py, with the coasts solved analytically (kepler) instead of integrated.
+  function circularVecPlan(r1, cplan) {
+    const rot = (v, axis, ang) => {
+      const k = mul3(1 / norm(axis), axis);
+      return add3(add3(mul3(Math.cos(ang), v), mul3(Math.sin(ang), cross(k, v))), mul3(dot(k, v) * (1 - Math.cos(ang)), k));
+    };
+    let y = [r1, 0, 0, 0, vc(r1), 0], t0 = 0;
+    const y0 = y.slice(), plan = [];
+    for (const [tb, vafter, dinc] of cplan) {
+      if (tb > t0) y = kepler(y, tb - t0);
+      const r = y.slice(0, 3), v = y.slice(3), h = cross(r, v), nh = mul3(1 / norm(h), h);
+      const nA = rot(nh, r, dinc), nB = rot(nh, r, -dinc), n = nA[2] <= nB[2] ? nA : nB;   // the sense that increases inclination
+      const vNew = mul3(vafter, cross(n, mul3(1 / norm(r), r)));
+      plan.push([tb, sub3(vNew, v)]);
+      y = [...r, ...vNew]; t0 = tb;
+    }
+    return { y0, plan };
+  }
   function lambert(r1v, r2v, dt) {
     const r1 = norm(r1v), r2 = norm(r2v);
     let th = Math.acos(Math.max(-1, Math.min(1, dot(r1v, r2v) / (r1 * r2))));
@@ -732,6 +779,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (ell) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax); else circularOptions(m, add, r1, r2, di, tofmax);
 
     for (const o of opts) {
+      if (o.cplan) Object.assign(o, circularVecPlan(r1, o.cplan));   // y0 + plan, as the elliptical models
       o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
       o.prop_frac = 1 - Math.exp(-(o.dv + o.dv_loss) / (o.isp * G0));   // the propellant also pays for the loss
       o.reasons = []; o.feasible = o.applicable;
@@ -831,8 +879,55 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     return out;
   }
 
+  // ------------------------------------------------------------- export
+  // NASA GMAT script and JSON of an option's burn plan, as gmat_script and burns_json in odst.py.
+  const EPOCH = "01 Jan 2026 12:00:00.000";   // UTC; arbitrary, as the tool has no timing model yet
+  const FRAME = "EarthMJ2000Eq, start orbit in the X-Y plane with its periapsis on +X";
+  const num = (x) => String(x + 0);                          // shortest text that reads back exactly; + 0 turns -0 into 0
+  const gfmt = (x) => String(Number((+x).toPrecision(6)));   // like printf %g
+  const alts = (m) => [m.alt1, m.apo1 ?? m.alt1, m.alt2, m.apo2 ?? m.alt2];
+  function gmatScript(m, o, report = "odst_arrival.txt") {
+    const [p1, a1, p2, a2] = alts(m), K = ["X", "Y", "Z", "VX", "VY", "VZ"];
+    const s = ["% Orbital Manoeuvre Decision Support Tool: GMAT export",
+      `% Transfer: ${o.name.replace(/Δ/g, "d")}, ${o.plan.length} burn(s), total dv ${o.dv.toFixed(4)} km/s (impulsive), flight time ${(o.tof / 3600).toFixed(2)} h`,
+      `% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude; target ${gfmt(p2)} x ${gfmt(a2)} km, di ${gfmt(m.di_deg)} deg, dw ${gfmt(m.dw_deg ?? 0)} deg`,
+      `% Frame: ${FRAME}, as in the tool.`,
+      "%   The epoch is arbitrary: the tool has no timing model yet.",
+      "% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
+      "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies.",
+      "", "% GMAT's default is 398600.4415, enough to shift a 10-day transfer's arrival by 0.2 km", `Earth.Mu = ${num(MU)};`,
+      "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", `Sat.Epoch = '${EPOCH}';`,
+      "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;",
+      ...K.map((k, j) => `Sat.${k} = ${num(o.y0[j])};`),
+      "", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
+      "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
+      "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"];
+    o.plan.forEach(([, dv], i) => s.push("", `Create ImpulsiveBurn Burn${i + 1};`, `Burn${i + 1}.CoordinateSystem = EarthMJ2000Eq;`,
+                                        ...dv.map((x, j) => `Burn${i + 1}.Element${j + 1} = ${num(x)};`)));
+    s.push("", "Create ReportFile Arrival;", `Arrival.Filename = '${report}';`, "Arrival.Precision = 16;", "Arrival.WriteHeaders = true;",
+           "", "Create OrbitView View;", "View.Add = {Sat, Earth};", "", "BeginMissionSequence;");
+    let t = 0;
+    o.plan.forEach(([tb], i) => {
+      if (tb > t) s.push(`Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(tb - t)}};`);
+      s.push(`Maneuver Burn${i + 1}(Sat);`);
+      t = tb;
+    });
+    const r2 = RE + p2, ra2 = RE + a2;
+    s.push(`Report Arrival ${K.map((k) => "Sat.EarthMJ2000Eq." + k).join(" ")} Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC;`,
+           `Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(2 * Math.PI * Math.sqrt(((r2 + ra2) / 2) ** 3 / MU))}};`);
+    return s.join("\n") + "\n";
+  }
+  function burnsJson(m, o) {
+    const [p1, a1, p2, a2] = alts(m), z = (x) => x + 0;
+    return JSON.stringify({ tool: "Orbital Manoeuvre Decision Support Tool", transfer: o.name, dv_kms: o.dv, tof_s: o.tof,
+      start_orbit_alt_km: [p1, a1], target_orbit_alt_km: [p2, a2], di_deg: m.di_deg, dw_deg: m.dw_deg ?? 0,
+      frame: FRAME, epoch_utc: EPOCH, mu_km3_s2: MU, start_state_km_kms: o.y0.map(z),
+      burns: o.plan.map(([t, dv]) => ({ t_s: t, dv_kms: dv.map(z), dv_mag_kms: norm(dv) })) }, null, 2) + "\n";
+  }
+
   const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
-                orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN };
+                orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN,
+                kepler, circularVecPlan, gmatScript, burnsJson };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -1034,6 +1129,16 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     renderGeo(m, res, !!opts.replay || (manualPick && prevSel !== selected));
     renderRules(res);
   }
+  function download(name, text, type) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  const selectedOpt = () => last.res.opts.find((x) => x.key === selected);
+  $("exGmat").addEventListener("click", () => download(`odst_${selected}.script`, O.gmatScript(last.m, selectedOpt()), "text/plain"));
+  $("exJson").addEventListener("click", () => download(`odst_${selected}.json`, O.burnsJson(last.m, selectedOpt()), "application/json"));
   function pick(key) {
     if (!last) return;
     manualPick = true;
@@ -1256,6 +1361,9 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const r1 = res.r1, r2 = res.r2, W = 360, H = 330, cx = W / 2, cy = H / 2;
     const [main, sub] = splitName(o.name);
     $("geoTitle").textContent = main + (sub ? ", " + sub : "");
+    const canExport = o.applicable && !!o.plan && o.plan.length > 0;   // low thrust has no burns
+    $("exGmat").disabled = $("exJson").disabled = !canExport;
+    $("exLabel").textContent = canExport ? "Download" : "Nothing to download";
     const { pts, burns, rmax } = res.ell ? ellGeometry(o, res) : geometry(o, r1, r2);
     const S = (Math.min(W, H) / 2 - 26) / rmax;
     const P = ([r, th]) => [cx + r * Math.cos(th) * S, cy - r * Math.sin(th) * S];

@@ -98,5 +98,60 @@ for (const [x, refs, rec, tolT = 1] of ell) {
     }
   });
 }
+// ---- export: exact burn plans, GMAT script and JSON (as python/validate.py section 5b)
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const nrm = (a) => Math.hypot(...a);
+let worst = 0;      // Kepler propagation vs Kepler's equation, [rp, ra, E0, E1]
+for (const [rp, ra, E0, E1] of [[6778, 6778, 0.3, 2.0], [7000, 42164, 1.0, 4.5], [6678, 384400, 5.0, 7.0], [8000, 30000, 2.5, 3.0]]) {
+  const a = (rp + ra) / 2, e = (ra - rp) / (ra + rp);
+  const th = (E) => 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
+  const t = (E) => Math.sqrt(a ** 3 / O.MU) * (E - e * Math.sin(E));
+  const s0 = O.orbitState(rp, ra, 0.4, 1.1, th(E0)), s1 = O.orbitState(rp, ra, 0.4, 1.1, th(E1));
+  const y = O.kepler([...s0.r, ...s0.v], t(E1) - t(E0));
+  worst = Math.max(worst, nrm(y.slice(0, 3).map((x, i) => x - s1.r[i])) / nrm(s1.r), nrm(y.slice(3).map((x, i) => x - s1.v[i])) / nrm(s1.v));
+}
+check("Kepler propagation vs Kepler's equation, 4 arcs up to e = 0.97 [1e-12 relative]", 1e12 * worst, 0, 100);
+const circ = [...expect.map((x) => x[0]), { ...base, alt2: 400, di_deg: 60 }, { ...base, alt1: 35786, alt2: 400, tof_max_h: 3 }];
+for (const m of circ) {
+  const r = O.evaluate(m);
+  for (const o of r.opts) {
+    if (!o.cplan || !o.applicable) continue;
+    const sim = O.simulateVec(o.y0, o.plan, 3600, 200000), y = sim.yf, rv = y.slice(0, 3), v = y.slice(3), h = cross(rv, v);   // fine steps: coasts out to e = 0.97
+    const a = 1 / (2 / nrm(rv) - (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) / O.MU);
+    const e = nrm(cross(v, h).map((x, i) => x / O.MU - rv[i] / nrm(rv))), inc = Math.acos(h[2] / nrm(h)) * 180 / Math.PI;
+    const ok = Math.abs(a - r.r2) / r.r2 < 1e-8 && e < 1e-6 && Math.abs(inc - m.di_deg) < 1e-6 && Math.abs(sim.dvUsed - o.dv) < 1e-12; fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] ${m.alt1.toFixed(0)}->${m.alt2.toFixed(0)} km di=${m.di_deg}: ${o.key} vector plan (RK4) ` +
+                `da/a=${((a - r.r2) / r.r2).toExponential(1)} e=${e.toExponential(1)} di=${(inc - m.di_deg).toExponential(1)} deg, sum|dv| - dv=${(sim.dvUsed - o.dv).toExponential(1)}`);
+  }
+}
+// same plans as python/odst.py: closed-form burns (no optimiser), [t, [dvx, dvy, dvz]]
+const pyRefV = { hohmann: [[0, [0, 2.3974725168152418, 0]], [19048.562509797113, [9.211582468598876e-16, -1.0838903670048219, 1.467101568882389]]],
+                 one_tangent: [[0, [0, 2.638184468665157, 0]], [10862.249834254219, [1.426823308614846, -1.958020944631118, 1.4671015688823885]]] };
+for (const [k, ref] of Object.entries(pyRefV)) {
+  const o = O.evaluate(base).opts.find((x) => x.key === k);
+  const d = Math.max(...ref.flatMap(([t, dv], i) => [t, ...dv].map((x, j) => Math.abs([o.plan[i][0], ...o.plan[i][1]][j] - x) / Math.max(1, Math.abs(x)))));
+  const ok = d < 1e-12; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] LEO -> GEO ${k} vector plan vs Python: largest difference ${d.toExponential(1)}`);
+}
+// GMAT script and JSON read back to the exact plan (GMAT flies them: python/gmat_crosscheck.py)
+for (const m of [base, { ...base, alt1: 400, alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0 }]) {
+  for (const o of O.evaluate(m).opts) {
+    if (!o.plan || !o.plan.length) continue;
+    const txt = O.gmatScript(m, o), js = JSON.parse(O.burnsJson(m, o));
+    const val = (k) => +txt.match(new RegExp(`^${k.replace(/\./g, "\\.")} = (\\S+);$`, "m"))[1];
+    const plan = []; let t = 0;
+    for (const line of txt.slice(txt.indexOf("BeginMissionSequence")).split("\n")) {
+      if (line.startsWith("Propagate") && plan.length < o.plan.length) t += +line.match(/ElapsedSecs = (\S+)}/)[1];
+      else if (line.startsWith("Maneuver")) { const b = plan.length + 1; plan.push([t, [1, 2, 3].map((j) => val(`Burn${b}.Element${j}`))]); }
+    }
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const ok = val("Earth.Mu") === O.MU && same(["X", "Y", "Z", "VX", "VY", "VZ"].map((k) => val("Sat." + k)), o.y0.map((x) => x + 0)) &&
+               same(js.start_state_km_kms, o.y0.map((x) => x + 0)) && plan.length === o.plan.length &&
+               plan.every(([tb, dv], i) => Math.abs(tb - o.plan[i][0]) <= 1e-9 * Math.max(1, o.plan[i][0]) && same(dv, o.plan[i][1].map((x) => x + 0))) &&
+               same(js.burns.map((b) => [b.t_s, b.dv_kms]), o.plan.map(([tb, dv]) => [tb, dv.map((x) => x + 0)]));
+    fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] ${o.key}: GMAT script and JSON give back the plan (${plan.length} burns, start state, Earth mu)`);
+  }
+}
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);
