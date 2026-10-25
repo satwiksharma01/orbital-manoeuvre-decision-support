@@ -4,6 +4,12 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- **GMAT export:** the web planner and the MATLAB app save the selected transfer as a NASA GMAT script and a JSON file of its burns; Python has `gmat_script` and `burns_json`. The script flies the burn plan from the start state with the tool's physics, including its Earth μ, and reports the orbit it arrives on.
+- **Exact burn plans for every impulsive transfer:** the circular transfers now also carry a start state and inertial Δv vectors, built with an analytic Kepler propagator.
+- **Verification:** GMAT flies the exported scripts of 21 transfers and arrives on target to 1.1 × 10⁻⁹; the export is tested in all three engines (`validate.py` 77 checks, `odst_tests.m` 91, `test_engine.js` 86).
+
 ### Changed
 
 - **Result figures:** the case A and B bars were regenerated, so their propellant fractions include the gravity loss (finding 9). The decision map came out identical.

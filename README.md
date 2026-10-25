@@ -16,6 +16,7 @@ Given an initial and a target orbit (circular, or elliptical with a periapsis an
 2. **Optimises each one:** the plane-change split (`fminbnd`), the bi-elliptic apoapsis under a time limit (grid search + `fminbnd` + `fzero`), the cheapest fast transfer that meets a deadline (`fzero`), and the Lambert transfer over departure point, arrival point and flight time (a universal-variable Lambert solver inside a grid search, golden section and Nelder–Mead). Lambert arcs are kept at least 100 km above the surface.
 3. **Applies rules:** hard constraints (Δv plus a finite-burn gravity-loss estimate and a margin, default 5 %, time, propulsion) plus textbook rules such as the 11.94 / 15.58 Hohmann vs bi-elliptic thresholds for coplanar transfers. The propellant fraction includes the gravity loss.
 4. **Ranks the survivors:** weighted-sum scoring cross-checked with TOPSIS, with presets for balanced, propellant-critical, time-critical and low-complexity missions.
+5. **Exports the chosen transfer to NASA GMAT:** a script that flies its burn plan from the start state and reports the orbit it arrives on, plus a JSON file of the burn times and inertial Δv vectors. Use the buttons under the transfer diagram in the web planner or the MATLAB app, or `gmat_script` and `burns_json` in `python/odst.py`.
 
 ## Results
 
@@ -41,7 +42,12 @@ Given an initial and a target orbit (circular, or elliptical with a periapsis an
   - Apse-to-apse between circular orbits equals Hohmann with the optimal split to 10⁻⁹ km/s.
   - Python, MATLAB and the web engine run the same algorithms and agree on four elliptical test missions: Δv to 5 × 10⁻¹⁰ km/s and the same recommendation.
   - Every elliptical burn plan, propagated, arrives on its target orbit with angular-momentum and eccentricity-vector errors around 10⁻¹¹.
-  - In GMAT, the differential corrector solves the GTO → GEO apogee burn itself (1.83334 km/s, within 0.05 mm/s of the tool). GMAT also flies all six elliptical burn plans, including a 3D Lambert transfer, and every arrival matches the target orbit to 3 × 10⁻⁹. That residual is GMAT's slightly different Earth μ.
+  - In GMAT, the differential corrector solves the GTO → GEO apogee burn itself (1.83334 km/s, within 0.05 mm/s of the tool). GMAT also flies all six elliptical burn plans, including a 3D Lambert transfer, from the exported scripts, and every arrival matches the target orbit to 3 × 10⁻¹¹.
+- **GMAT export:**
+  - GMAT runs the exported scripts of 21 transfers from ten missions, circular and elliptical, and arrives on the target orbit to 1.1 × 10⁻⁹ or better.
+  - The scripts set GMAT's Earth μ to the tool's value. GMAT's default, 7.5 × 10⁻¹⁰ lower, moved the arrival of a 10-day bi-elliptic plane change by e = 2.6 × 10⁻⁵ (0.2 km).
+  - Circular transfers' burn plans coast with an analytic Kepler propagator, which matches Kepler's equation to 10⁻¹¹. Propagated numerically, each plan reaches its target orbit at exactly the closed-form Δv.
+  - In all three engines, every exported script and JSON file reads back to the exact plan. On 271 random missions every engine's plan flies onto its target to 10⁻¹⁰; plans without an optimised parameter agree across engines to 10⁻¹³ km/s, optimised ones to 4 × 10⁻⁷ km/s.
 - **Independent audit (2026-10-22)**, with methods unlike the engines' own:
   - The Lambert solver matches a shooting solution (numerical propagation plus root-finding) on 60 random 3D transfers, short and long way, elliptic and hyperbolic, to 2 × 10⁻¹⁰ km/s.
   - **Ground clearance:** without a check, 7 of 120 time-limited missions between low-perigee orbits produced Lambert "optima" that passed up to 609 km *below* the surface. Every Lambert arc must now stay above 100 km altitude. The floor is an exact penalty, because a hard wall stopped the search short of the boundary (46 m/s high). On a case where the floor is active, the result matches the global optimum from differential evolution to 0.4 mm/s and sits on the floor.
@@ -75,6 +81,7 @@ This is an early trade-study and teaching tool: it tells you which family of tra
 | Burn timing is ignored | Phasing, rendezvous and launch windows |
 | Low thrust is Edelbaum at constant acceleration | Power limits, eclipses and acceleration rising as propellant is used. The closed form holds only up to Δi = 114.6° (2 rad), so low thrust isn't offered for larger plane changes |
 | A fixed Δv margin (default 5 %) | Uncertainty in Isp, thrust and pointing |
+| The GMAT export uses the tool's frame | The start orbit lies in GMAT's EarthMJ2000Eq X-Y plane with its periapsis on +X, at an arbitrary epoch; real orbital elements and epochs can't be entered yet. Low thrust has no impulsive burns, so it isn't exported |
 | Weights are chosen by the user | Only the time weight is swept; other weights can flip the ranking |
 
 Within these assumptions the results match NASA GMAT (see Verification).
