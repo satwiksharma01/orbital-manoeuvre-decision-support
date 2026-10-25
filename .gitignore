@@ -6,6 +6,7 @@ submission/
 *.slxc
 slprj/
 *.autosave
+*.slx.r20*
 
 # Python
 __pycache__/
