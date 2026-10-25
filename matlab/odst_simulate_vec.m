@@ -2,7 +2,7 @@ function [T, Y, yf, dvUsed] = odst_simulate_vec(y0, plan, coastAfter)
 %ODST_SIMULATE_VEC Verify a vector burn plan by two-body numerical propagation.
 %   [T, Y, yf, dvUsed] = odst_simulate_vec(y0, plan, coastAfter) starts from
 %   state y0 = [r; v] and adds each burn of plan = [t, dvx, dvy, dvz] at its
-%   time. Used for the elliptical models (odst_apse, odst_lambert_opt);
+%   time. Used for every impulsive option's vector plan (odst_evaluate);
 %   mirrors simulate_vec() in python/odst.py.
 if nargin < 3, coastAfter = 0; end
 C = odst_const(); mu = C.MU;

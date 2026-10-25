@@ -34,6 +34,7 @@ opts = [c{:}];
 for i = 1:numel(opts)
     if ~isempty(opts(i).plan)
         opts(i).legs = opts(i).plan(:, 4:5);
+        [opts(i).y0, opts(i).vplan] = circularVecPlan(C.MU, r1, opts(i).plan);
     end
     if ~isempty(opts(i).legs)
         opts(i).dv_loss = odst_gravity_loss(opts(i).legs, opts(i).isp, m.tw_chem);
@@ -166,8 +167,31 @@ end
 c{end+1} = o;
 end
 
-% plan: circular-model burn plan (odst_simulate); y0 + vplan: vector burn plan
-% of the elliptical models (odst_simulate_vec); legs: [radius, dv] per burn
+% A circular model's burn plan [t, speed after, plane rotation] as a vector plan: the burns
+% of odst_simulate, with the coasts solved analytically (odst_kepler) instead of integrated,
+% so the plan is exact. Same as circular_vec_plan in odst.py.
+function [y0, vplan] = circularVecPlan(mu, r1, plan)
+y = [r1; 0; 0; 0; sqrt(mu/r1); 0]; y0 = y; t0 = 0;
+vplan = zeros(size(plan, 1), 4);
+for i = 1:size(plan, 1)
+    if plan(i, 1) > t0, y = odst_kepler(y, plan(i, 1) - t0); end
+    r = y(1:3); v = y(4:6); nh = cross(r, v)/norm(cross(r, v));
+    % rotate about the node line in the sense that increases inclination (as odst_simulate)
+    nA = rodrigues(nh, r, plan(i, 3)); nB = rodrigues(nh, r, -plan(i, 3));
+    if nA(3) <= nB(3), n = nA; else, n = nB; end
+    vNew = plan(i, 2)*cross(n, r/norm(r));
+    vplan(i, :) = [plan(i, 1), (vNew - v).'];
+    y = [r; vNew]; t0 = plan(i, 1);
+end
+end
+
+function v = rodrigues(v, axis, ang)
+k = axis/norm(axis);
+v = v*cos(ang) + cross(k, v)*sin(ang) + k*dot(k, v)*(1 - cos(ang));
+end
+
+% plan: circular-model burn plan (odst_simulate); y0 + vplan: vector burn plan of every
+% impulsive option (odst_simulate_vec, the GMAT export); legs: [radius, dv] per burn
 function o = newOpt(key, name, dv, tof, burns, isp, cplx, plan, params)
 o = struct('key', key, 'name', name, 'dv', dv, 'tof', tof, 'burns', burns, ...
            'isp', isp, 'complexity', cplx, 'applicable', true, 'note', '', ...

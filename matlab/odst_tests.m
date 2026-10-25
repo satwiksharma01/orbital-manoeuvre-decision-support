@@ -121,6 +121,77 @@ for c = 1:numel(ell)
         end
     end
 end
+fprintf('\n=== 5b. Export: exact burn plans, GMAT script and JSON ===\n');
+% Kepler propagation vs Kepler's equation, start and end points from eccentric anomalies [E0 E1]
+arcs = [6778 6778 0.3 2.0; 7000 42164 1.0 4.5; 6678 384400 5.0 7.0; 8000 30000 2.5 3.0];   % rp ra [km]
+worst = 0;
+for q = 1:size(arcs, 1)
+    rp = arcs(q, 1); ra = arcs(q, 2); a = (rp + ra)/2; e = (ra - rp)/(ra + rp);
+    th = @(E) 2*atan2(sqrt(1 + e)*sin(E/2), sqrt(1 - e)*cos(E/2));
+    t = @(E) sqrt(a^3/C.MU)*(E - e*sin(E));
+    [r0, v0] = odst_orbit_state(rp, ra, 0.4, 1.1, th(arcs(q, 3)));
+    y = odst_kepler([r0; v0], t(arcs(q, 4)) - t(arcs(q, 3)));
+    [rv, vv] = odst_orbit_state(rp, ra, 0.4, 1.1, th(arcs(q, 4)));
+    worst = max([worst, norm(y(1:3) - rv)/norm(rv), norm(y(4:6) - vv)/norm(vv)]);
+end
+check('Kepler propagation vs Kepler''s equation, 4 arcs up to e = 0.97 [1e-12 relative]', 1e12*worst, 0, 100);
+% The circular models' exact vector plans: propagated, they reach the target at the closed-form cost
+more = {odst_mission('alt1', 400, 'alt2', 400, 'di_deg', 60), ...
+        odst_mission('alt1', 35786, 'alt2', 400, 'di_deg', 28.5, 'tof_max_h', 3)};
+allc = [cases, more];
+for c = 1:numel(allc)
+    m = allc{c};
+    opts = odst_evaluate(m);
+    r2 = RE + m.alt2;
+    for i = 1:numel(opts)
+        o = opts(i);
+        if isempty(o.plan) || ~o.applicable, continue; end
+        [~, ~, yf, dvSim] = odst_simulate_vec(o.y0, o.vplan, 3600);
+        [a, e, inc] = odst_elements(yf);
+        report(abs(a - r2)/r2 < 1e-8 && e < 1e-6 && abs(inc - m.di_deg) < 1e-6 && abs(dvSim - o.dv) < 1e-12, ...
+               sprintf('%5.0f->%5.0f km di=%4.1f: %-38s vector plan da/a=%.1e e=%.1e di=%.1e deg, sum|dv| - dv=%.1e', ...
+                       m.alt1, m.alt2, m.di_deg, o.name, (a - r2)/r2, e, inc - m.di_deg, dvSim - o.dv));
+    end
+end
+% Same plans as python/odst.py: closed-form burns (no optimiser), rows [t dvx dvy dvz]
+opts = odst_evaluate(cases{1});
+pyRefV = {'hohmann', [0 0 2.3974725168152418 0; 19048.562509797113 9.211582468598876e-16 -1.0838903670048219 1.467101568882389]
+          'one_tangent', [0 0 2.638184468665157 0; 10862.249834254219 1.426823308614846 -1.958020944631118 1.4671015688823885]};
+for q = 1:size(pyRefV, 1)
+    o = opts(strcmp({opts.key}, pyRefV{q, 1}));
+    d = max(max(abs(o.vplan - pyRefV{q, 2})./max(1, abs(pyRefV{q, 2}))));
+    report(d < 1e-12, sprintf('LEO -> GEO %-12s vector plan vs Python: largest difference %.1e', o.key, d));
+end
+% GMAT script and JSON read back to the exact plan (GMAT flies them: python/gmat_crosscheck.py)
+for mm = {cases{1}, ell{2}}
+    m = mm{1};
+    opts = odst_evaluate(m);
+    for i = 1:numel(opts)
+        o = opts(i);
+        if isempty(o.vplan), continue; end
+        txt = odst_gmat_script(m, o); js = jsondecode(odst_burns_json(m, o));
+        val = @(k) str2double(regexp(txt, ['^' regexptranslate('escape', k) ' = (\S+);$'], 'tokens', 'once', 'lineanchors'));
+        lines = splitlines(txt(strfind(txt, 'BeginMissionSequence'):end));
+        P = zeros(0, 4); t = 0;
+        for q = 1:numel(lines)
+            if startsWith(lines{q}, 'Propagate') && size(P, 1) < size(o.vplan, 1)
+                t = t + str2double(regexp(lines{q}, 'ElapsedSecs = (\S+)}', 'tokens', 'once'));
+            elseif startsWith(lines{q}, 'Maneuver')
+                b = size(P, 1) + 1;
+                P(b, :) = [t, val(sprintf('Burn%d.Element1', b)), val(sprintf('Burn%d.Element2', b)), ...
+                           val(sprintf('Burn%d.Element3', b))];
+            end
+        end
+        y0 = cellfun(@(k) val(['Sat.' k]), {'X', 'Y', 'Z', 'VX', 'VY', 'VZ'}).';
+        jb = js.burns;
+        ok = val('Earth.Mu') == C.MU && isequal(y0, o.y0) && isequal(js.start_state_km_kms, o.y0) && ...
+             isequal(size(P), size(o.vplan)) && all(abs(P(:, 1) - o.vplan(:, 1)) <= 1e-9*max(1, o.vplan(:, 1))) && ...
+             isequal(P(:, 2:4), o.vplan(:, 2:4)) && isequal([[jb.t_s].', [jb.dv_kms].'], o.vplan);
+        report(ok, sprintf('%-38s GMAT script and JSON give back the plan (%d burns, start state, Earth mu)', ...
+                           o.name, size(P, 1)));
+    end
+end
+
 if nFail == 0
     fprintf('\nALL CHECKS PASSED\n');
 else

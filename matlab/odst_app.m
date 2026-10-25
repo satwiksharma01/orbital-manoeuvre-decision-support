@@ -141,7 +141,10 @@ h.vWhy.WordWrap = 'on'; h.vWhy.VerticalAlignment = 'top';
 charts = uigridlayout(right, [1 2], 'ColumnWidth', {'1.25x', '1x'}, 'ColumnSpacing', 16, ...
                       'Padding', [0 0 0 0], 'BackgroundColor', T.bg);
 [h.axTrade, ~, ~] = chartCard(charts, 'Trade space', [DEL 'v against transfer time. Hollow markers break a constraint.']);
-[h.axGeo, h.geoSub, h.geoTitle] = chartCard(charts, 'Transfer geometry', '');
+[h.axGeo, h.geoSub, h.geoTitle, h.export] = chartCard(charts, 'Transfer geometry', '');
+h.export.Text = 'Export to GMAT';
+h.export.Tooltip = 'Save a NASA GMAT script and a JSON file of the burns';
+h.export.ButtonPushedFcn = @(~, ~) exportPlan();
 
 % ---- ranking + rule-based checks
 bottom = uigridlayout(right, [1 2], 'ColumnWidth', {'2.3x', '1x'}, 'ColumnSpacing', 16, ...
@@ -432,6 +435,7 @@ update(false);
         ax = h.axGeo; m = lastM; opts = lastOpts;
         o = opts(strcmp({opts.key}, selected));
         if isempty(o), o = opts(1); end
+        h.export.Enable = onOff(o.applicable && ~isempty(o.vplan));     % low thrust has no burns to export
         r1 = C.RE + m.alt1; r2 = C.RE + m.alt2; k = 1e-3;
         ra1 = C.RE + max(m.alt1, m.apo1); ra2 = C.RE + max(m.alt2, m.apo2);   % max ignores NaN
         ell = any(strcmp({opts.key}, 'apse'));
@@ -515,6 +519,23 @@ update(false);
         end
         set(mk(isvalid(mk)), 'Visible', 'on'); set(tx(isvalid(tx)), 'Visible', 'on');
         if isvalid(ax), hold(ax, 'off'); end
+    end
+
+    function exportPlan()
+        % the selected transfer as a GMAT script plus a JSON file of its burns, same base name
+        o = lastOpts(strcmp({lastOpts.key}, selected));
+        [f, p] = uiputfile('*.script', 'Export the transfer to NASA GMAT', ['odst_' o.key '.script']);
+        if isequal(f, 0), return; end
+        [~, base] = fileparts(f);
+        writeText(fullfile(p, f), odst_gmat_script(lastM, o));
+        writeText(fullfile(p, [base '.json']), odst_burns_json(lastM, o));
+        h.geoSub.Text = sprintf('Saved %s and %s.json.', f, base);
+    end
+
+    function writeText(file, txt)
+        fid = fopen(file, 'w', 'n', 'UTF-8');
+        fprintf(fid, '%s', txt);
+        fclose(fid);
     end
 
     function [x, y] = outline(rp, ra, di, dw)
@@ -685,11 +706,17 @@ update(false);
         end
     end
 
-    function [ax, sub, ttl] = chartCard(parent, ttlText, subText)
+    function [ax, sub, ttl, btn] = chartCard(parent, ttlText, subText)
         p = uipanel(parent, 'BorderType', 'none', 'BackgroundColor', T.surface);
         g2 = uigridlayout(p, [3 1], 'RowHeight', {22, 18, '1x'}, 'Padding', [18 12 18 10], ...
                           'RowSpacing', 2, 'BackgroundColor', T.surface);
-        ttl = lbl(g2, ttlText, 16, T.label, 'bold');
+        hd = uigridlayout(g2, [1 2], 'ColumnWidth', {'1x', 'fit'}, 'Padding', [0 0 0 0], ...
+                          'ColumnSpacing', 8, 'BackgroundColor', T.surface);
+        ttl = lbl(hd, ttlText, 16, T.label, 'bold');
+        if nargout > 3          % a small button at the right of the title
+            btn = uibutton(hd, 'FontName', T.font, 'FontSize', 12, 'BackgroundColor', T.fill, ...
+                           'FontColor', T.label);
+        end
         sub = lbl(g2, subText, 12, T.label2);
         ax = uiaxes(g2);
         set(ax, 'Color', T.surface, 'BackgroundColor', T.surface, 'FontName', T.font, 'FontSize', 11, ...
