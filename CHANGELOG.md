@@ -6,12 +6,15 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 ### Added
 
+- **Orbital elements:** each orbit's inclination, RAAN and argument of periapsis can be entered instead of an inclination change, in Python (`Mission(elements=...)`), MATLAB (`'elements'`) and the web, behind an Orientation toggle in both planners; the inclination change stays the default. The models get the angle between the planes and each periapsis measured from the node line; apse-to-apse and Lambert accept a start periapsis off the node line. The GMAT script and JSON hold the orbits as entered, in EarthMJ2000Eq, and the script also reports RAAN and argument of periapsis. New example: Kourou GTO (i 6°, ω 178°) to GEO.
 - **GMAT export:** the web planner and the MATLAB app save the selected transfer as a NASA GMAT script and a JSON file of its burns; Python has `gmat_script` and `burns_json`. The script flies the burn plan from the start state with the tool's physics, including its Earth μ, and reports the orbit it arrives on.
 - **Exact burn plans for every impulsive transfer:** the circular transfers now also carry a start state and inertial Δv vectors, built with an analytic Kepler propagator.
-- **Verification:** GMAT flies the exported scripts of 21 transfers and arrives on target to 1.1 × 10⁻⁹; the export is tested in all three engines (`validate.py` 77 checks, `odst_tests.m` 91, `test_engine.js` 86).
+- **Verification:** GMAT flies the exported scripts and arrives on target to 1.1 × 10⁻⁹; the export and the orbital elements are tested in all three engines.
 
 ### Changed
 
+- **Circular transfers' burn plans** now turn the plane toward the target plane itself and change plane on the node line, so they arrive in the right plane, not only at the right inclination. A raising one-tangent transfer starts earlier on the circular orbit for this. Δv and flight times are unchanged.
+- **Test suites:** `validate.py` 97 checks, `odst_tests.m` 114, `test_engine.js` 109; the GMAT cross-check flies 28 exported scripts.
 - **Result figures:** the case A and B bars were regenerated, so their propellant fractions include the gravity loss (finding 9). The decision map came out identical.
 - **Repository:** removed an unused screenshot and the backup copy Simulink kept when it upgraded the model; `*.slx.r20*` is now ignored.
 
