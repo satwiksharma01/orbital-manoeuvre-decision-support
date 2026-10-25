@@ -1,6 +1,6 @@
-function res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid)
+function res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid, om1)
 %ODST_LAMBERT_OPT Minimum-dv two-impulse Lambert transfer between two orbits.
-%   res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid) searches
+%   res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid, om1) searches
 %   departure true anomaly, arrival true anomaly and transfer time (60 s to
 %   min(tofmax, the longer orbital period)): an nGrid x nGrid grid (default
 %   16) with a golden-section search on time per cell, then Nelder-Mead from
@@ -9,10 +9,11 @@ function res = odst_lambert_opt(rp1, ra1, rp2, ra2, di, dw, tofmax, nGrid)
 %   above 100 km altitude; that floor is an exact penalty (0.01 km/s per km to
 %   search, 10 to polish), because a wall stops Nelder-Mead short of the
 %   boundary. A result still below the floor is rejected. res = [] if nothing
-%   is found.
+%   is found. om1: the start periapsis from the node line (default 0).
 %   Same algorithm, step for step, as lambert_optimal() in python/odst.py,
 %   so the engines agree to rounding.
-if nargin < 8, nGrid = 16; end
+if nargin < 8 || isempty(nGrid), nGrid = 16; end
+if nargin < 9, om1 = 0; end
 C = odst_const(); mu = C.MU;
 tmin = 60;
 per = @(rp, ra) 2*pi*sqrt(((rp + ra)/2)^3/mu);
@@ -64,7 +65,7 @@ res = struct('dv', fx, 'tof', T, 'burns', 2, 'y0', [r1v; v1v], 'plan', [0, dv1v.
     function [f, r1v, v1v, r2v, dv1v, dv2v, dv, short] = solve(x, K)
         f = Inf; r1v = []; v1v = []; r2v = []; dv1v = []; dv2v = []; dv = Inf; short = Inf;
         if x(3) < 0 || x(3) > 1, return; end
-        [r1v, v1v] = odst_orbit_state(rp1, ra1, 0, 0, x(1));
+        [r1v, v1v] = odst_orbit_state(rp1, ra1, 0, om1, x(1));
         [r2v, v2v] = odst_orbit_state(rp2, ra2, di, dw, x(2));
         if norm(cross(r1v, r2v)) < gap*norm(r1v)*norm(r2v), return; end
         [w1, w2] = odst_lambert(r1v, r2v, tmin + x(3)*(tmax - tmin));

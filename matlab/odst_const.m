@@ -7,7 +7,8 @@ C.G0 = 9.80665e-3;    % standard gravity [km/s^2]
 % GMAT and JSON export (odst_gmat_script, odst_burns_json): the epoch is arbitrary, as
 % the tool has no timing model yet
 C.EPOCH = '01 Jan 2026 12:00:00.000';    % UTC
-C.FRAME = 'EarthMJ2000Eq, start orbit in the X-Y plane with its periapsis on +X';
+C.FRAME = 'EarthMJ2000Eq, the tool''s frame: start orbit in the X-Y plane, node line on +X';
+C.FRAME_ELEMENTS = 'EarthMJ2000Eq, orbits from the elements entered';
 % Operational complexity index per manoeuvre (1 = simplest ... 5 = hardest).
 % See docs/REPORT.md section 4.4 for the justification of each value.
 C.CPLX = struct('hohmann', 1.0, 'hohmann_split', 2.0, 'one_tangent', 2.5, ...

@@ -135,7 +135,8 @@ for q = 1:size(arcs, 1)
     worst = max([worst, norm(y(1:3) - rv)/norm(rv), norm(y(4:6) - vv)/norm(vv)]);
 end
 check('Kepler propagation vs Kepler''s equation, 4 arcs up to e = 0.97 [1e-12 relative]', 1e12*worst, 0, 100);
-% The circular models' exact vector plans: propagated, they reach the target at the closed-form cost
+% The circular models' exact vector plans: propagated, they reach the target plane itself (normal
+% [0; -sin(di); cos(di)]), not only its inclination, at the closed-form cost
 more = {odst_mission('alt1', 400, 'alt2', 400, 'di_deg', 60), ...
         odst_mission('alt1', 35786, 'alt2', 400, 'di_deg', 28.5, 'tof_max_h', 3)};
 allc = [cases, more];
@@ -147,34 +148,38 @@ for c = 1:numel(allc)
         o = opts(i);
         if isempty(o.plan) || ~o.applicable, continue; end
         [~, ~, yf, dvSim] = odst_simulate_vec(o.y0, o.vplan, 3600);
-        [a, e, inc] = odst_elements(yf);
-        report(abs(a - r2)/r2 < 1e-8 && e < 1e-6 && abs(inc - m.di_deg) < 1e-6 && abs(dvSim - o.dv) < 1e-12, ...
-               sprintf('%5.0f->%5.0f km di=%4.1f: %-38s vector plan da/a=%.1e e=%.1e di=%.1e deg, sum|dv| - dv=%.1e', ...
-                       m.alt1, m.alt2, m.di_deg, o.name, (a - r2)/r2, e, inc - m.di_deg, dvSim - o.dv));
+        [dh, de] = targetMismatch(yf, m);
+        report(dh < 1e-6 && de < 1e-6 && abs(dvSim - o.dv) < 1e-12, ...
+               sprintf('%5.0f->%5.0f km di=%4.1f: %-38s vector plan |dh|/h=%.1e |de|=%.1e, sum|dv| - dv=%.1e', ...
+                       m.alt1, m.alt2, m.di_deg, o.name, dh, de, dvSim - o.dv));
     end
 end
-% Same plans as python/odst.py: closed-form burns (no optimiser), rows [t dvx dvy dvz]
+% Same plans as python/odst.py: closed-form burns (no optimiser), start state and rows [t dvx dvy dvz]
 opts = odst_evaluate(cases{1});
-pyRefV = {'hohmann', [0 0 2.3974725168152418 0; 19048.562509797113 9.211582468598876e-16 -1.0838903670048219 1.467101568882389]
-          'one_tangent', [0 0 2.638184468665157 0; 10862.249834254219 1.426823308614846 -1.958020944631118 1.4671015688823885]};
+pyRefV = {'hohmann', [6778.137 0 0 0 7.668558175407055 0], ...
+          [0 0 2.3974725168152418 0; 19048.562509797113 9.211582468598876e-16 -1.0838903670048219 -1.467101568882389]
+          'one_tangent', [-5964.52423775776 -3219.874501897429 0 3.6428586402591523 -6.748063827253831 0], ...
+          [0 1.2532385966758652 -2.3215103511524484 0; 10862.249834254219 -2.18568965499367 1.0451944822253934 1.467101568882389]};
 for q = 1:size(pyRefV, 1)
     o = opts(strcmp({opts.key}, pyRefV{q, 1}));
-    d = max(max(abs(o.vplan - pyRefV{q, 2})./max(1, abs(pyRefV{q, 2}))));
-    report(d < 1e-12, sprintf('LEO -> GEO %-12s vector plan vs Python: largest difference %.1e', o.key, d));
+    d = max([abs(o.y0(:).' - pyRefV{q, 2})./max(1, abs(pyRefV{q, 2})), ...
+             reshape(abs(o.vplan - pyRefV{q, 3})./max(1, abs(pyRefV{q, 3})), 1, [])]);
+    report(d < 1e-12, sprintf('LEO -> GEO %-12s start state and vector plan vs Python: largest difference %.1e', o.key, d));
 end
 % GMAT script and JSON read back to the exact plan (GMAT flies them: python/gmat_crosscheck.py)
-for mm = {cases{1}, ell{2}}
+for mm = {cases{1}, ell{2}, odst_mission('alt1', 400, 'alt2', 600, 'apo2', 39700, 'elements', [51.6 30 0 63.4 100 270], 'tof_max_h', 30)}
     m = mm{1};
     opts = odst_evaluate(m);
     for i = 1:numel(opts)
         o = opts(i);
         if isempty(o.vplan), continue; end
         txt = odst_gmat_script(m, o); js = jsondecode(odst_burns_json(m, o));
+        [y0i, plani] = odst_inertial_plan(m, o);
         val = @(k) str2double(regexp(txt, ['^' regexptranslate('escape', k) ' = (\S+);$'], 'tokens', 'once', 'lineanchors'));
         lines = splitlines(txt(strfind(txt, 'BeginMissionSequence'):end));
         P = zeros(0, 4); t = 0;
         for q = 1:numel(lines)
-            if startsWith(lines{q}, 'Propagate') && size(P, 1) < size(o.vplan, 1)
+            if startsWith(lines{q}, 'Propagate') && size(P, 1) < size(plani, 1)
                 t = t + str2double(regexp(lines{q}, 'ElapsedSecs = (\S+)}', 'tokens', 'once'));
             elseif startsWith(lines{q}, 'Maneuver')
                 b = size(P, 1) + 1;
@@ -184,11 +189,81 @@ for mm = {cases{1}, ell{2}}
         end
         y0 = cellfun(@(k) val(['Sat.' k]), {'X', 'Y', 'Z', 'VX', 'VY', 'VZ'}).';
         jb = js.burns;
-        ok = val('Earth.Mu') == C.MU && isequal(y0, o.y0) && isequal(js.start_state_km_kms, o.y0) && ...
-             isequal(size(P), size(o.vplan)) && all(abs(P(:, 1) - o.vplan(:, 1)) <= 1e-9*max(1, o.vplan(:, 1))) && ...
-             isequal(P(:, 2:4), o.vplan(:, 2:4)) && isequal([[jb.t_s].', [jb.dv_kms].'], o.vplan);
-        report(ok, sprintf('%-38s GMAT script and JSON give back the plan (%d burns, start state, Earth mu)', ...
-                           o.name, size(P, 1)));
+        ok = val('Earth.Mu') == C.MU && isequal(y0, y0i) && isequal(js.start_state_km_kms, y0i) && ...
+             isequal(size(P), size(plani)) && all(abs(P(:, 1) - plani(:, 1)) <= 1e-9*max(1, plani(:, 1))) && ...
+             isequal(P(:, 2:4), plani(:, 2:4)) && isequal([[jb.t_s].', [jb.dv_kms].'], plani) && ...
+             (isempty(m.elements) && isempty(js.elements_deg) || isequal(js.elements_deg(:).', m.elements));
+        report(ok, sprintf('%-38s GMAT script and JSON give back the plan (%d burns, start state, Earth mu%s)', ...
+                           o.name, size(P, 1), repmat(', elements', 1, ~isempty(m.elements))));
+    end
+end
+
+fprintf('\n=== 5c. Orbital elements (inclination, RAAN, argument of periapsis) ===\n');
+dvs = @(m) evalDv(odst_evaluate(m));
+% Elements that put the start orbit in x-y with the node on +x are the relative inputs themselves
+rel = {odst_mission('alt1', 400, 'alt2', 600, 'apo2', 39700, 'di_deg', 20, 'dw_deg', 270), [0 0 0 20 0 270]
+       odst_mission('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'di_deg', 28.5), [0 0 0 28.5 0 0]};
+for q = 1:size(rel, 1)
+    r = rel{q, 1};
+    m = odst_mission('alt1', r.alt1, 'apo1', r.apo1, 'alt2', r.alt2, 'apo2', r.apo2, 'elements', rel{q, 2});
+    check(sprintf('Elements [%s] == relative inputs, every option [km/s]', strtrim(sprintf('%g ', rel{q, 2}))), ...
+          max(abs(dvs(m) - dvs(r))), 0, 1e-12);
+end
+% Turning both orbits together (both RAANs + 40 deg) changes nothing
+c = dvs(odst_mission('alt1', 300, 'apo1', 12000, 'alt2', 800, 'apo2', 20000, 'elements', [28.5 10 30 40 70 120], 'tof_max_h', 20));
+d = dvs(odst_mission('alt1', 300, 'apo1', 12000, 'alt2', 800, 'apo2', 20000, 'elements', [28.5 50 30 40 110 120], 'tof_max_h', 20));
+check('Both orbits turned 40 deg about the pole: Lambert, 3D [km/s]', max(abs(c - d)), 0, 1e-9);
+% A RAAN change alone: the planes are 2 asin(sin i sin(dRAAN/2)) apart (spherical trigonometry)
+m = odst_mission('alt1', 500, 'alt2', 500, 'elements', [51.6 0 0 51.6 10 0]);
+ref = 2*asin(sin(51.6*pi/180)*sin(5*pi/180));
+check('RAAN 0 -> 10 deg at i = 51.6 deg: angle between the planes [deg]', m.di_deg, ref*180/pi, 1e-12);
+opts = odst_evaluate(m);
+check('  its single-burn plane change, 2 v sin(di/2) [km/s]', opts(1).dv, 2*sqrt(C.MU/(RE + 500))*sin(ref/2), 1e-12);
+% GTO with its apogee on the node line equals the relative GTO; 2 deg off it, only Lambert is exact
+g = odst_evaluate(odst_mission('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'elements', [6 0 180 0 0 0]));
+g6 = odst_evaluate(odst_mission('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'di_deg', 6));
+check('GTO i 6, argp 180 -> GEO: apse-to-apse == relative di 6 [km/s]', g(1).dv, g6(1).dv, 1e-12);
+o = odst_evaluate(odst_mission('alt1', 250, 'apo1', 35786, 'alt2', 35786, 'elements', [6 0 178 0 0 0]));
+report(~o(1).applicable && o(2).applicable && o(2).dv > g(1).dv, sprintf(['GTO i 6, argp 178 -> GEO: apse-to-apse ' ...
+       'not offered (%s); Lambert %.6f km/s, %.1f m/s above the aligned case'], o(1).note, o(2).dv, 1e3*(o(2).dv - g(1).dv)));
+% Same derived geometry and results as python/odst.py: [di w1 dw] deg, then [dv km/s, TOF s] per applicable option
+pyEl = {{'alt1', 400, 'alt2', 35786, 'elements', [51.6 120 0 0 0 0]}, [51.60000000000001 0 0], ...
+        [4.824649844 19048.5625; 4.784537299 19048.5625; 4.501603228 920556.7324; 5.901213052 10862.2498; 7.805548982 15611097.9632]
+        {'alt1', 250, 'apo1', 35786, 'alt2', 35786, 'elements', [6 0 178 0 0 0]}, [6.000000000000001 358 0], [1.496760716 3479.8681]
+        {'alt1', 400, 'alt2', 600, 'apo2', 39700, 'elements', [51.6 30 0 63.4 100 270], 'tof_max_h', 30}, ...
+        [58.815692017167976 0 210.591986530302], [4.442609368 8948.9431]};
+for q = 1:size(pyEl, 1)
+    m = odst_mission(pyEl{q, 1}{:});
+    opts = odst_evaluate(m); opts = opts([opts.applicable]);
+    got = [[opts.dv].', [opts.tof].'];
+    report(max(abs([m.di_deg m.w1_deg m.dw_deg] - pyEl{q, 2})) < 1e-9 && isequal(size(got), size(pyEl{q, 3})) && ...
+           max(abs(got(:, 1) - pyEl{q, 3}(:, 1))) < 1e-6 && max(abs(got(:, 2) - pyEl{q, 3}(:, 2))) < 1, ...
+           sprintf('[%s]: di %.6f, w1 %.6f, dw %.6f deg and %d options as Python (dv to 1e-6 km/s, TOF to 1 s)', ...
+                   strtrim(sprintf('%g ', m.elements)), m.di_deg, m.w1_deg, m.dw_deg, numel(opts)));
+end
+% Every plan, turned into EarthMJ2000Eq and propagated, arrives on the target given by its own elements
+elm = {{'alt1', 400, 'alt2', 35786, 'elements', [51.6 120 0 0 0 0]}
+       {'alt1', 400, 'alt2', 35786, 'elements', [28.5 0 0 0 0 0], 'tof_max_h', 3}
+       {'alt1', 500, 'alt2', 500, 'elements', [51.6 0 0 51.6 10 0]}
+       {'alt1', 250, 'apo1', 35786, 'alt2', 35786, 'elements', [6 0 178 0 0 0]}
+       {'alt1', 400, 'alt2', 600, 'apo2', 39700, 'elements', [51.6 30 0 63.4 100 270], 'tof_max_h', 30}
+       {'alt1', 300, 'apo1', 12000, 'alt2', 800, 'apo2', 20000, 'elements', [28.5 10 30 40 70 120], 'tof_max_h', 20}};
+for q = 1:numel(elm)
+    m = odst_mission(elm{q}{:});
+    e = m.elements*pi/180;
+    [P2, ~, W2] = odst_perifocal(e(4), e(5), e(6));
+    rp = RE + m.alt2; ra = RE + max(m.alt2, m.apo2); p = 2*rp*ra/(rp + ra);
+    opts = odst_evaluate(m);
+    for i = 1:numel(opts)
+        o = opts(i);
+        if isempty(o.vplan) || ~o.applicable, continue; end
+        [y0i, plani] = odst_inertial_plan(m, o);
+        [~, ~, yf, dvSim] = odst_simulate_vec(y0i, plani, 3600);
+        r = yf(1:3); v = yf(4:6); h = cross(r, v);
+        dh = norm(h - sqrt(C.MU*p)*W2)/sqrt(C.MU*p);
+        de = norm(cross(v, h)/C.MU - r/norm(r) - (ra - rp)/(ra + rp)*P2);
+        report(dh < 1e-6 && de < 1e-6 && abs(dvSim - o.dv) < 1e-9, sprintf(['[%-22s] %-38s dv=%.6f  arrival vs the ' ...
+               'target''s elements |dh|/h=%.1e |de|=%.1e'], strtrim(sprintf('%g ', m.elements)), o.name, o.dv, dh, de));
     end
 end
 
@@ -205,6 +280,12 @@ end
         if ok, tag = 'PASS'; else, tag = 'FAIL'; nFail = nFail + 1; end
         fprintf('[%s] %s\n', tag, msg);
     end
+end
+
+function d = evalDv(opts)
+% dv of every option, NaN where not applicable
+d = [opts.dv]; d(~[opts.applicable]) = NaN;
+d(isnan(d)) = 0;
 end
 
 function [dh, de] = targetMismatch(y, m)

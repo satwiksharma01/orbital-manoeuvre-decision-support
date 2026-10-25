@@ -34,7 +34,7 @@ opts = [c{:}];
 for i = 1:numel(opts)
     if ~isempty(opts(i).plan)
         opts(i).legs = opts(i).plan(:, 4:5);
-        [opts(i).y0, opts(i).vplan] = circularVecPlan(C.MU, r1, opts(i).plan);
+        [opts(i).y0, opts(i).vplan] = circularVecPlan(C.MU, r1, opts(i).plan, di);
     end
     if ~isempty(opts(i).legs)
         opts(i).dv_loss = odst_gravity_loss(opts(i).legs, opts(i).isp, m.tw_chem);
@@ -52,7 +52,7 @@ if ~isempty(f)
     rec = opts(f(j));
 end
 if ell
-    advice = ellipticalAdvice(m, opts(1).applicable);
+    advice = ellipticalAdvice(opts(1));
 else
     advice = ruleAdvice(m, r1, r2, di);
 end
@@ -64,7 +64,8 @@ function c = ellipticalOptions(m, C, r1, ra1, r2, ra2, di)
 % elliptical mission is sized with the apse-to-apse and Lambert models only.
 dw = m.dw_deg*pi/180;
 c = {};
-[res, why] = odst_apse(r1, ra1, r2, ra2, di, dw);
+om1 = m.w1_deg*pi/180;
+[res, why] = odst_apse(r1, ra1, r2, ra2, di, dw, om1);
 name = 'Apse-to-apse (optimal di split)';
 if isempty(res)
     o = newOpt('apse', name, NaN, NaN, 0, m.isp_chem, C.CPLX.apse, [], struct());
@@ -76,7 +77,7 @@ else
     o.y0 = res.y0; o.vplan = res.plan; o.legs = res.legs;
 end
 c{end+1} = o;
-res = odst_lambert_opt(r1, ra1, r2, ra2, di, dw, m.tof_max_h*3600);
+res = odst_lambert_opt(r1, ra1, r2, ra2, di, dw, m.tof_max_h*3600, [], om1);
 name = 'Lambert (minimum dv)';
 if isempty(res)
     o = newOpt('lambert', name, NaN, NaN, 2, m.isp_chem, C.CPLX.lambert, [], struct());
@@ -90,13 +91,13 @@ end
 c{end+1} = o;
 end
 
-function adv = ellipticalAdvice(m, apseOk)
+function adv = ellipticalAdvice(apse)
 adv = {['Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume ' ...
         'circular orbits, so the apse-to-apse and Lambert transfers are sized instead.']};
-if apseOk
+if apse.applicable
     adv{end+1} = 'Apse lines aligned: a transfer between apsides is available, usually the cheapest.';
 else
-    adv{end+1} = sprintf('Apse lines %g deg apart: only a Lambert transfer is offered.', m.dw_deg);
+    adv{end+1} = sprintf('No apse-to-apse transfer: %s. Only a Lambert transfer is offered.', apse.note);
 end
 end
 
@@ -167,18 +168,32 @@ end
 c{end+1} = o;
 end
 
-% A circular model's burn plan [t, speed after, plane rotation] as a vector plan: the burns
-% of odst_simulate, with the coasts solved analytically (odst_kepler) instead of integrated,
-% so the plan is exact. Same as circular_vec_plan in odst.py.
-function [y0, vplan] = circularVecPlan(mu, r1, plan)
-y = [r1; 0; 0; 0; sqrt(mu/r1); 0]; y0 = y; t0 = 0;
+% A circular model's burn plan [t, speed after, plane rotation] as a vector plan in the
+% relative frame: the burns of odst_simulate, with the coasts solved analytically
+% (odst_kepler) instead of integrated, so the plan is exact. Plane changes turn toward the
+% target plane, normal [0; -sin(di); cos(di)], and must happen on the node line (x): if the
+% first one wouldn't (a raising one-tangent transfer changes plane on arrival), the start
+% point is moved back so that it does. Same as circular_vec_plan in odst.py.
+function [y0, vplan] = circularVecPlan(mu, r1, plan, di)
+y = [r1; 0; 0; 0; sqrt(mu/r1); 0]; t0 = 0; phi = 0;
+for i = 1:size(plan, 1)                    % in the start plane up to the first plane change
+    if plan(i, 1) > t0, y = odst_kepler(y, plan(i, 1) - t0); t0 = plan(i, 1); end
+    if plan(i, 3) ~= 0
+        phi = atan2(y(2), y(1));
+        if abs(sin(phi)) < 1e-9, phi = 0; end
+        break
+    end
+    y(4:6) = plan(i, 2)*cross([0; 0; 1], y(1:3)/norm(y(1:3)));
+end
+c = cos(phi); s = sin(phi); v1 = sqrt(mu/r1);
+y = [r1*c; -r1*s; 0; v1*s; v1*c; 0]; y0 = y; t0 = 0;
+toward = [0; -sin(di); cos(di)];
 vplan = zeros(size(plan, 1), 4);
 for i = 1:size(plan, 1)
     if plan(i, 1) > t0, y = odst_kepler(y, plan(i, 1) - t0); end
     r = y(1:3); v = y(4:6); nh = cross(r, v)/norm(cross(r, v));
-    % rotate about the node line in the sense that increases inclination (as odst_simulate)
     nA = rodrigues(nh, r, plan(i, 3)); nB = rodrigues(nh, r, -plan(i, 3));
-    if nA(3) <= nB(3), n = nA; else, n = nB; end
+    if dot(nA, toward) >= dot(nB, toward), n = nA; else, n = nB; end
     vNew = plan(i, 2)*cross(n, r/norm(r));
     vplan(i, :) = [plan(i, 1), (vNew - v).'];
     y = [r; vNew]; t0 = plan(i, 1);
