@@ -472,7 +472,7 @@ update(false);
         th = linspace(0, 2*pi, 361);
         fill(ax, k*C.RE*cos(th), k*C.RE*sin(th), T.earth, 'EdgeColor', 'none');
         if ell        % top view of both orbits; the target's plane is turned by di about x
-            [x1, y1] = outline(r1, ra1, 0, 0); [x2, y2] = outline(r2, ra2, m.di_deg*pi/180, m.dw_deg*pi/180);
+            [x1, y1] = outline(r1, ra1, 0, m.w1_deg*pi/180); [x2, y2] = outline(r2, ra2, m.di_deg*pi/180, m.dw_deg*pi/180);
             plot(ax, k*x1, k*y1, 'Color', T.orbit, 'LineWidth', 1);
             plot(ax, k*x2, k*y2, '--', 'Color', T.orbit, 'LineWidth', 1);
             r1 = ra1; r2 = ra2;                                  % for the axis limits below
