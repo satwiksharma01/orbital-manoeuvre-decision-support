@@ -73,7 +73,7 @@ class Mission:
     prop_chem_kg: float = 800.0    # chemical propellant on board, kg
     power_ep_kW: float = 6.5       # electric thruster input power, kW
     eff_ep: float = 0.6            # electric thruster efficiency: jet power / input power
-    prop_ep_kg: float = 400.0      # electric propellant on board, kg
+    prop_ep_kg: float = 100.0      # electric propellant on board, kg
 
     def __post_init__(self):
         if self.elements is not None:

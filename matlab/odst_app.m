@@ -17,7 +17,7 @@ CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = c
 defaults = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced', 'elements', [], 'mass0_kg', NaN, ...
-                  'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 400);
+                  'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 100);
 defEl = [28.5 0 0 0 0 0];       % element inputs before any are entered: LEO at 28.5 deg -> GEO
 examples = {
     ['LEO ' ARW ' GEO'],         struct()
@@ -33,7 +33,7 @@ examples = {
                                        'propulsion', 'chemical')
     'Kourou GTO',               struct('alt1', 250, 'apo1', 35786, 'elements', [6 0 178 0 0 0], ...
                                        'propulsion', 'chemical')
-    'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 600, 'prop_ep_kg', 350)};
+    'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350)};
 
 % ---- state shared by the nested callbacks
 prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; selected = ''; manual = false; order = {};
