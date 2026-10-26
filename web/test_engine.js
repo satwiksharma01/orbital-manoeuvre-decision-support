@@ -111,6 +111,16 @@ for (const [rp, ra, E0, E1] of [[6778, 6778, 0.3, 2.0], [7000, 42164, 1.0, 4.5],
   worst = Math.max(worst, nrm(y.slice(0, 3).map((x, i) => x - s1.r[i])) / nrm(s1.r), nrm(y.slice(3).map((x, i) => x - s1.v[i])) / nrm(s1.v));
 }
 check("Kepler propagation vs Kepler's equation, 4 arcs up to e = 0.97 [1e-12 relative]", 1e12 * worst, 0, 100);
+worst = 0;          // ... and hyperbolic arcs (fast Lambert transfers): M = e sinh F - F; [rp, e, F0, F1]
+for (const [rp, e, F0, F1] of [[7000, 1.05, -1, 2], [12000, 3, -2.5, 0.5], [20000, 7.5, 0.2, 2.9]]) {
+  const a = rp / (1 - e), p = rp * (1 + e), { P, Q } = O.perifocal(0.4, 1.1, 0.7);
+  const th = (F) => 2 * Math.atan(Math.sqrt((e + 1) / (e - 1)) * Math.tanh(F / 2)), t = (F) => Math.sqrt((-a) ** 3 / O.MU) * (e * Math.sinh(F) - F);
+  const st = (nu) => [...P.map((c, i) => p / (1 + e * Math.cos(nu)) * (Math.cos(nu) * c + Math.sin(nu) * Q[i])),
+                      ...P.map((c, i) => Math.sqrt(O.MU / p) * (-Math.sin(nu) * c + (e + Math.cos(nu)) * Q[i]))];
+  const y = O.kepler(st(th(F0)), t(F1) - t(F0)), ref = st(th(F1));
+  worst = Math.max(worst, nrm(y.slice(0, 3).map((x, i) => x - ref[i])) / nrm(ref.slice(0, 3)), nrm(y.slice(3).map((x, i) => x - ref[i + 3])) / nrm(ref.slice(3)));
+}
+check("Kepler propagation vs the hyperbolic Kepler equation, 3 arcs, e 1.05 to 7.5 [1e-12 relative]", 1e12 * worst, 0, 100);
 const circ = [...expect.map((x) => x[0]), { ...base, alt2: 400, di_deg: 60 }, { ...base, alt1: 35786, alt2: 400, tof_max_h: 3 }];
 for (const m of circ) {
   const r = O.evaluate(m);

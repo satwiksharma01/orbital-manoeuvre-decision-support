@@ -6,6 +6,10 @@ C = odst_const(); mu = C.MU; sq = sqrt(mu);
 r0v = y(1:3); v0v = y(4:6);
 r0 = norm(r0v); vr0 = dot(r0v, v0v)/r0; alpha = 2/r0 - dot(v0v, v0v)/mu;
 x = sq*abs(alpha)*dt;
+if alpha < -1e-6          % hyperbolic: Vallado's guess (Algorithm 8); the elliptic one can overflow sinh
+    a = 1/alpha;
+    x = sign(dt)*sqrt(-a)*log(-2*mu*alpha*dt/(dot(r0v, v0v) + sign(dt)*sqrt(-mu*a)*(1 - r0*alpha)));
+end
 for it = 1:100
     z = alpha*x^2; [Cz, Sz] = stumpff(z);
     F = r0*vr0/sq*x^2*Cz + (1 - alpha*r0)*x^3*Sz + r0*x - sq*dt;

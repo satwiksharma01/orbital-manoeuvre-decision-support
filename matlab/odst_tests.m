@@ -185,6 +185,19 @@ for q = 1:size(arcs, 1)
     worst = max([worst, norm(y(1:3) - rv)/norm(rv), norm(y(4:6) - vv)/norm(vv)]);
 end
 check('Kepler propagation vs Kepler''s equation, 4 arcs up to e = 0.97 [1e-12 relative]', 1e12*worst, 0, 100);
+% ... and hyperbolic arcs (fast Lambert transfers), from the hyperbolic anomaly: M = e sinh F - F; [rp e F0 F1]
+arcs = [7000 1.05 -1 2; 12000 3 -2.5 0.5; 20000 7.5 0.2 2.9];
+worst = 0;
+for q = 1:size(arcs, 1)
+    rp = arcs(q, 1); e = arcs(q, 2); a = rp/(1 - e); p = rp*(1 + e);
+    [P, Q] = odst_perifocal(0.4, 1.1, 0.7);
+    th = @(F) 2*atan(sqrt((e + 1)/(e - 1))*tanh(F/2));
+    t = @(F) sqrt((-a)^3/C.MU)*(e*sinh(F) - F);
+    st = @(nu) [p/(1 + e*cos(nu))*(cos(nu)*P + sin(nu)*Q); sqrt(C.MU/p)*(-sin(nu)*P + (e + cos(nu))*Q)];
+    y = odst_kepler(st(th(arcs(q, 3))), t(arcs(q, 4)) - t(arcs(q, 3))); ref = st(th(arcs(q, 4)));
+    worst = max([worst, norm(y(1:3) - ref(1:3))/norm(ref(1:3)), norm(y(4:6) - ref(4:6))/norm(ref(4:6))]);
+end
+check('Kepler propagation vs the hyperbolic Kepler equation, 3 arcs, e 1.05 to 7.5 [1e-12 relative]', 1e12*worst, 0, 100);
 % The circular models' exact vector plans: propagated, they reach the target plane itself (normal
 % [0; -sin(di); cos(di)]), not only its inclination, at the closed-form cost
 more = {odst_mission('alt1', 400, 'alt2', 400, 'di_deg', 60), ...

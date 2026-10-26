@@ -253,6 +253,20 @@ for _ in range(200):
     r, v = orbit_state(rp, ra, P, Q, th(E1))
     worst = max(worst, np.linalg.norm(y[:3] - r) / np.linalg.norm(r), np.linalg.norm(y[3:] - v) / np.linalg.norm(v))
 check("Kepler propagation vs Kepler's equation, 200 random arcs up to e = 0.97 [1e-12 relative]", 1e12 * worst, 0.0, 100)
+# ... and hyperbolic arcs (fast Lambert transfers), from the hyperbolic anomaly: M = e sinh F - F
+worst = 0.0
+for _ in range(200):
+    rp, e = RE + rng.uniform(200, 20000), rng.uniform(1.01, 8)
+    a, p = rp / (1 - e), rp * (1 + e)
+    P, Q = orbit_basis(rng.uniform(0, math.pi), rng.uniform(0, 2 * math.pi))
+    F0, F1 = np.sort(rng.uniform(-3, 3, 2))
+    th = lambda F: 2 * math.atan(math.sqrt((e + 1) / (e - 1)) * math.tanh(F / 2))
+    t = lambda F: math.sqrt((-a) ** 3 / MU) * (e * math.sinh(F) - F)
+    st = lambda nu: np.concatenate([p / (1 + e * math.cos(nu)) * (math.cos(nu) * P + math.sin(nu) * Q),
+                                    math.sqrt(MU / p) * (-math.sin(nu) * P + (e + math.cos(nu)) * Q)])
+    y, ref = kepler(st(th(F0)), t(F1) - t(F0)), st(th(F1))
+    worst = max(worst, np.linalg.norm(y[:3] - ref[:3]) / np.linalg.norm(ref[:3]), np.linalg.norm(y[3:] - ref[3:]) / np.linalg.norm(ref[3:]))
+check("Kepler propagation vs the hyperbolic Kepler equation, 200 random arcs, e 1.01 to 8 [1e-12 relative]", 1e12 * worst, 0.0, 100)
 # The circular models' exact vector plans: propagated, they reach the target plane itself (normal
 # (0, -sin di, cos di)), not only its inclination, at the closed-form cost
 for m in cases + [Mission(alt1=400, alt2=400, di_deg=60), Mission(alt1=35786, alt2=400, di_deg=28.5, tof_max_h=3)]:

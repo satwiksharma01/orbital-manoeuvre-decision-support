@@ -805,6 +805,10 @@ def kepler(y, dt):
     r0, sq = np.linalg.norm(r0v), math.sqrt(MU)
     vr0, alpha = np.dot(r0v, v0v) / r0, 2 / r0 - np.dot(v0v, v0v) / MU
     x = sq * abs(alpha) * dt
+    if alpha < -1e-6:       # hyperbolic: Vallado's guess (Algorithm 8); the elliptic one can overflow sinh
+        a = 1 / alpha
+        x = math.copysign(math.sqrt(-a), dt) * math.log(
+            -2 * MU * alpha * dt / (np.dot(r0v, v0v) + math.copysign(math.sqrt(-MU * a), dt) * (1 - r0 * alpha)))
     for _ in range(100):
         z = alpha * x * x
         C, S = stumpff(z)
