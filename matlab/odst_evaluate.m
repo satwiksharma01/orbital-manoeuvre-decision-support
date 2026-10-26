@@ -5,6 +5,7 @@ function [opts, rec, advice] = odst_evaluate(m)
 %   opts   struct array, one element per candidate manoeuvre:
 %          key, name, dv [km/s], tof [s], burns, isp [s], complexity,
 %          applicable, note, plan (burn plan), params, prop_frac (mp/m0),
+%          prop_kg (propellant mass, with the spacecraft model),
 %          feasible, reasons, score_ws, score_topsis
 %   rec    recommended option (highest weighted-sum score among feasible), or []
 %   advice cellstr of rule-of-thumb statements (rule-based decision matrix)
@@ -41,6 +42,7 @@ for i = 1:numel(opts)
     end
     % Tsiolkovsky; the propellant also pays for the finite-burn loss, as the budget check does
     opts(i).prop_frac = 1 - exp(-(opts(i).dv + opts(i).dv_loss)/(opts(i).isp*C.G0));
+    opts(i).prop_kg = m.mass0_kg*opts(i).prop_frac;            % NaN without the spacecraft model
 end
 opts = applyRules(m, opts);
 opts = scoreOptions(m, opts);
@@ -158,7 +160,8 @@ if ~same
 end
 
 % --- 5. Low-thrust spiral (Edelbaum) --------------------------------------
-[dv, tof] = odst_lowthrust(r1, r2, di, m.accel_ep);
+isp = []; if ~isnan(m.mass0_kg), isp = m.isp_ep; end       % spacecraft: constant thrust, falling mass
+[dv, tof] = odst_lowthrust(r1, r2, di, m.accel_ep, isp);
 o = newOpt('low_thrust', 'Low-thrust spiral (Edelbaum)', dv, tof, 0, m.isp_ep, ...
            C.CPLX.low_thrust, zeros(0, 3), struct());
 if di > 2          % rad, 114.6 deg: Edelbaum's yaw angle sweeps pi/2*di, which must not exceed pi
@@ -211,7 +214,7 @@ function o = newOpt(key, name, dv, tof, burns, isp, cplx, plan, params)
 o = struct('key', key, 'name', name, 'dv', dv, 'tof', tof, 'burns', burns, ...
            'isp', isp, 'complexity', cplx, 'applicable', true, 'note', '', ...
            'plan', plan, 'y0', [], 'vplan', zeros(0, 4), 'legs', zeros(0, 2), ...
-           'params', params, 'dv_loss', 0, 'prop_frac', NaN, 'feasible', true, ...
+           'params', params, 'dv_loss', 0, 'prop_frac', NaN, 'prop_kg', NaN, 'feasible', true, ...
            'reasons', '', 'score_ws', NaN, 'score_topsis', NaN);
 end
 
@@ -242,6 +245,16 @@ for i = 1:numel(opts)
         if ~strcmp(o.key, 'low_thrust') && strcmp(m.propulsion, 'electric')
             o.feasible = false;
             r{end+1} = 'no high-thrust (chemical) propulsion on board'; %#ok<AGROW>
+        end
+        if ~isnan(m.mass0_kg)          % the propellant on board must cover the same dv as the budget
+            C = odst_const();
+            if strcmp(o.key, 'low_thrust'), onboard = m.prop_ep_kg; else, onboard = m.prop_chem_kg; end
+            prop = m.mass0_kg*(1 - exp(-need/(o.isp*C.G0)));
+            if prop > onboard
+                o.feasible = false;
+                r{end+1} = sprintf('needs %.0f kg of propellant with the %g%% margin, %.0f kg on board', ...
+                                   prop, m.margin_pct, onboard); %#ok<AGROW>
+            end
         end
     end
     o.reasons = strjoin(r, '; ');

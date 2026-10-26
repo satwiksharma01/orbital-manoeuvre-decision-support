@@ -16,7 +16,8 @@ CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = c
 
 defaults = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
-                  'accel_ep', 5e-4, 'preset', 'Balanced', 'elements', []);
+                  'accel_ep', 5e-4, 'preset', 'Balanced', 'elements', [], 'mass0_kg', NaN, ...
+                  'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 400);
 defEl = [28.5 0 0 0 0 0];       % element inputs before any are entered: LEO at 28.5 deg -> GEO
 examples = {
     ['LEO ' ARW ' GEO'],         struct()
@@ -31,15 +32,16 @@ examples = {
     ['LEO ' ARW ' Molniya'],     struct('alt2', 600, 'apo2', 39700, 'dw_deg', 270, 'di_deg', 0, ...
                                        'propulsion', 'chemical')
     'Kourou GTO',               struct('alt1', 250, 'apo1', 35786, 'elements', [6 0 178 0 0 0], ...
-                                       'propulsion', 'chemical')};
+                                       'propulsion', 'chemical')
+    'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 600, 'prop_ep_kg', 350)};
 
 % ---- state shared by the nested callbacks
-prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; selected = ''; manual = false; order = {};
+prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; selected = ''; manual = false; order = {};
 lastM = []; lastOpts = []; lastRec = []; lastAdv = {};
 h = struct();
 
 % ================================================================ window
-fig = uifigure('Name', 'Orbital Manoeuvre Planner', 'Position', [40 40 1380 900]);
+fig = uifigure('Name', 'Orbital Manoeuvre Planner', 'Position', [40 40 1460 900]);
 if isprop(fig, 'Theme'), fig.Theme = 'light'; end
 fig.Color = T.bg;
 root = uigridlayout(fig, [2 1], 'RowHeight', {58, '1x'}, 'Padding', [0 0 0 0], ...
@@ -112,12 +114,20 @@ for k = 1:4
 end
 
 groupTitle(left, 'Engine and limits');
-g = listPanel(left, 5);
-h.ispc = numRow(g, 'Chemical Isp', defaults.isp_chem, [1 Inf], 's');
-h.tw   = numRow(g, 'Chemical thrust/weight', defaults.tw_chem, [0.01 Inf], '');
-h.ispe = numRow(g, 'Electric Isp', defaults.isp_ep, [1 Inf], 's');
-h.acc  = numRow(g, 'Electric thrust F/m', defaults.accel_ep, [1e-7 1], ['m/s' char(178)]);
-h.rbm  = numRow(g, 'Max bi-elliptic apoapsis', defaults.rb_max, [1 Inf], 'km');
+h.engGrid = listPanel(left, 13);
+h.vehSeg = segRow(h.engGrid, 'Vehicle', {'Generic', 'Spacecraft'}, {'generic', 'spacecraft'}, @pickVehicle);
+h.m0   = numRow(h.engGrid, 'Wet mass', 1000, [1 Inf], 'kg');
+h.ispc = numRow(h.engGrid, 'Chemical Isp', defaults.isp_chem, [1 Inf], 's');
+h.tw   = numRow(h.engGrid, 'Chemical thrust/weight', defaults.tw_chem, [0.01 Inf], '');
+h.thr  = numRow(h.engGrid, 'Chemical thrust', defaults.thrust_chem_N, [1e-3 Inf], 'N');
+h.pc   = numRow(h.engGrid, 'Chemical propellant', defaults.prop_chem_kg, [0 Inf], 'kg');
+h.ispe = numRow(h.engGrid, 'Electric Isp', defaults.isp_ep, [1 Inf], 's');
+h.acc  = numRow(h.engGrid, 'Electric thrust F/m', defaults.accel_ep, [1e-7 1], ['m/s' char(178)]);
+h.pwr  = numRow(h.engGrid, 'Electric power', defaults.power_ep_kW, [1e-3 Inf], 'kW');
+h.eff  = numRow(h.engGrid, 'Electric efficiency', defaults.eff_ep, [0.01 1], '');
+h.pe   = numRow(h.engGrid, 'Electric propellant', defaults.prop_ep_kg, [0 Inf], 'kg');
+h.derived = lbl(h.engGrid, '', 12.5, T.label2);
+h.rbm  = numRow(h.engGrid, 'Max bi-elliptic apoapsis', defaults.rb_max, [1 Inf], 'km');
 
 % ================================================================ results (right)
 right = uigridlayout(body, [3 1], 'RowHeight', {214, '1x', 252}, 'Padding', [0 0 0 0], ...
@@ -139,12 +149,12 @@ h.vSub = lbl(vg, '', 15, T.label2);
 st = uigridlayout(vg, [2 5], 'RowHeight', {30, 18}, 'ColumnWidth', repmat({'1x'}, 1, 5), ...
                   'Padding', [0 0 0 0], 'RowSpacing', 0, 'ColumnSpacing', 12, 'BackgroundColor', T.surface);
 statNames = {['Total ' DEL 'v'], 'Transfer time', 'Burns', 'Propellant (% of mass)', 'Score (of 1)'};
-h.stat = gobjects(1, 5);
+h.stat = gobjects(1, 5); h.statLbl = gobjects(1, 5);
 for k = 1:5
     h.stat(k) = lbl(st, '', 22, T.label, 'bold');
     h.stat(k).Layout.Row = 1; h.stat(k).Layout.Column = k;
-    c = lbl(st, statNames{k}, 12, T.label2);
-    c.Layout.Row = 2; c.Layout.Column = k;
+    h.statLbl(k) = lbl(st, statNames{k}, 12, T.label2);
+    h.statLbl(k).Layout.Row = 2; h.statLbl(k).Layout.Column = k;
 end
 h.vWhy = lbl(vg, '', 13, T.label2);
 h.vWhy.WordWrap = 'on'; h.vWhy.VerticalAlignment = 'top';
@@ -185,6 +195,7 @@ h.rules.WordWrap = 'on'; h.rules.VerticalAlignment = 'top';
 applyPreset('Balanced');
 setSeg(h.propSeg, prop);
 layoutOrbits();
+layoutEngine();
 highlightChip(1);
 update(false);
 
@@ -206,6 +217,11 @@ update(false);
         layoutOrbits();
         h.dvb.Value = d.dv_budget; h.mrg.Value = d.margin_pct; h.tof.Value = d.tof_max_h; h.rbm.Value = d.rb_max;
         h.ispc.Value = d.isp_chem; h.tw.Value = d.tw_chem; h.ispe.Value = d.isp_ep; h.acc.Value = d.accel_ep;
+        vehicle = 'generic';
+        if ~isnan(d.mass0_kg), vehicle = 'spacecraft'; h.m0.Value = d.mass0_kg; end
+        h.thr.Value = d.thrust_chem_N; h.pc.Value = d.prop_chem_kg; h.pwr.Value = d.power_ep_kW;
+        h.eff.Value = d.eff_ep; h.pe.Value = d.prop_ep_kg;
+        layoutEngine();
         prop = d.propulsion; setSeg(h.propSeg, prop);
         applyPreset(d.preset);
         manual = false;
@@ -222,6 +238,26 @@ update(false);
         prop = v; setSeg(h.propSeg, v);
         highlightChip(0);
         update(false);
+    end
+
+    function pickVehicle(v)
+        vehicle = v;
+        layoutEngine();
+        highlightChip(0);
+        update(false);
+    end
+
+    function layoutEngine()
+        % Rows of Engine and limits: vehicle; mass; chemical Isp, T/W or thrust and propellant;
+        % electric Isp, F/m or power, efficiency and propellant; the derived thrust; rB limit
+        sc = strcmp(vehicle, 'spacecraft');
+        rows = [1, sc, 1, ~sc, sc, sc, 1, ~sc, sc, sc, sc, sc, 1];
+        h.engGrid.RowHeight = num2cell(40*rows);
+        rowObj = [h.m0.Parent, h.tw.Parent, h.thr.Parent, h.pc.Parent, h.acc.Parent, h.pwr.Parent, ...
+                  h.eff.Parent, h.pe.Parent, h.derived];
+        set(rowObj, {'Visible'}, arrayfun(@onOff, logical(rows([2 4:6 8:12])), 'UniformOutput', false).');
+        left.RowHeight{10} = 8 + 40*sum(rows);
+        setSeg(h.vehSeg, vehicle);
     end
 
     function pickOrient(v)
@@ -313,6 +349,15 @@ update(false);
             'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
             'isp_chem', h.ispc.Value, 'tw_chem', h.tw.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
             'rb_max', h.rbm.Value, 'weights', w);
+        if strcmp(vehicle, 'spacecraft')    % the propellant on board can't weigh more than the spacecraft
+            h.pc.Value = min(h.pc.Value, h.m0.Value); h.pe.Value = min(h.pe.Value, h.m0.Value - h.pc.Value);
+            m = odst_mission('alt1', m.alt1, 'alt2', m.alt2, 'apo1', m.apo1, 'apo2', m.apo2, 'dw_deg', m.dw_deg, ...
+                'di_deg', m.di_deg, 'elements', m.elements, 'dv_budget', m.dv_budget, 'margin_pct', m.margin_pct, ...
+                'tof_max_h', m.tof_max_h, 'propulsion', prop, 'isp_chem', m.isp_chem, 'isp_ep', m.isp_ep, ...
+                'rb_max', m.rb_max, 'weights', w, 'mass0_kg', h.m0.Value, 'thrust_chem_N', h.thr.Value, ...
+                'prop_chem_kg', h.pc.Value, 'power_ep_kW', h.pwr.Value, 'eff_ep', h.eff.Value, 'prop_ep_kg', h.pe.Value);
+            h.derived.Text = sprintf('    T/W %.3g, electric thrust %.3g N', m.tw_chem, odst_ep_thrust(m));
+        end
         [opts, rec, adv] = odst_evaluate(m);
         h.planes.Text = sprintf('    Planes %.4g%s apart', m.di_deg, DEG);
         lastM = m; lastOpts = opts; lastRec = rec; lastAdv = adv;
@@ -357,8 +402,9 @@ update(false);
         end
         [a, b] = splitName(r.name);
         h.vName.Text = a; h.vSub.Text = b;
-        vals = {sprintf('%.3f km/s', r.dv), odst_fmt_time(r.tof), burnsText(r.burns), ...
-                sprintf('%.1f', 100*r.prop_frac), sprintf('%.2f', r.score_ws)};
+        prop = sprintf('%.1f', 100*r.prop_frac); h.statLbl(4).Text = 'Propellant (% of mass)';
+        if ~isnan(r.prop_kg), prop = sprintf('%.0f', r.prop_kg); h.statLbl(4).Text = 'Propellant (kg)'; end
+        vals = {sprintf('%.3f km/s', r.dv), odst_fmt_time(r.tof), burnsText(r.burns), prop, sprintf('%.2f', r.score_ws)};
         for k2 = 1:5, h.stat(k2).Text = vals{k2}; end
         h.vWhy.Text = [detailText(r, m) note sprintf(' %d of %d candidates meet your constraints.', ...
                        numel(f), numel(opts))];
@@ -387,7 +433,7 @@ update(false);
                 score = '-'; tops = '-'; status = o.reasons;
             end
             D(r, :) = {o.name, sprintf('%.3f', o.dv), odst_fmt_time(o.tof), burnsText(o.burns), ...
-                       sprintf('%.1f%%', 100*o.prop_frac), sprintf('%.1f', o.complexity), score, tops, status};
+                       propText(o), sprintf('%.1f', o.complexity), score, tops, status};
             if isnan(o.dv), D(r, 2:5) = {'-'}; end      % an elliptical model that doesn't apply
         end
         h.tbl.Data = D;
@@ -639,6 +685,10 @@ update(false);
             case 'lambert',       n = 'Lambert';
             otherwise,            n = 'Low-thrust';
         end
+    end
+
+    function t = propText(o)
+        if isnan(o.prop_kg), t = sprintf('%.1f%%', 100*o.prop_frac); else, t = sprintf('%.0f kg', o.prop_kg); end
     end
 
     function t = burnsText(b)

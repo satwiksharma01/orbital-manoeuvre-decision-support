@@ -10,6 +10,12 @@ function m = odst_mission(varargin)
 %   elements       [i1 RAAN1 argp1 i2 RAAN2 argp2] in deg, or [] (default). If set,
 %                  di_deg, w1_deg and dw_deg follow from them, and R holds the rotation
 %                  from the relative frame to EarthMJ2000Eq (odst_relative_geometry)
+%   mass0_kg       wet mass at departure [kg], or NaN (default): the generic tw_chem and
+%                  accel_ep. If set, the spacecraft model is on: thrust_chem_N [N] sets
+%                  tw_chem, power_ep_kW [kW] and eff_ep set the electric thrust
+%                  (odst_ep_thrust) and accel_ep at departure, the electric thrust stays
+%                  constant as the mass falls, and prop_chem_kg / prop_ep_kg [kg], the
+%                  propellant on board, are hard limits
 %   dv_budget      available delta-v [km/s]
 %   margin_pct     delta-v margin the budget must also cover [%]
 %   tof_max_h      maximum transfer time [h]
@@ -24,7 +30,9 @@ function m = odst_mission(varargin)
 m = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, ...
            'tof_max_h', 24*200, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, ...
            'isp_ep', 1600, 'accel_ep', 5e-4, 'rb_max', 384400, ...
-           'k_one_tangent', 1.5, 'weights', [0.30 0.20 0.30 0.20], 'w1_deg', 0, 'elements', [], 'R', []);
+           'k_one_tangent', 1.5, 'weights', [0.30 0.20 0.30 0.20], 'w1_deg', 0, 'elements', [], 'R', [], ...
+           'mass0_kg', NaN, 'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, ...
+           'prop_ep_kg', 400);
 for i = 1:2:numel(varargin)
     if ~isfield(m, varargin{i})
         error('odst_mission:badField', 'Unknown mission field "%s".', varargin{i});
@@ -33,5 +41,10 @@ for i = 1:2:numel(varargin)
 end
 if ~isempty(m.elements)
     [m.di_deg, m.w1_deg, m.dw_deg, m.R] = odst_relative_geometry(m);
+end
+if ~isnan(m.mass0_kg)
+    C = odst_const();
+    m.tw_chem = m.thrust_chem_N/(m.mass0_kg*C.G0*1e3);
+    m.accel_ep = odst_ep_thrust(m)/m.mass0_kg;
 end
 end

@@ -41,12 +41,23 @@ L = [{'% Orbital Manoeuvre Decision Support Tool: GMAT export'
      'Sat.DisplayStateType = Cartesian;'}];
 k = {'X', 'Y', 'Z', 'VX', 'VY', 'VZ'};
 for j = 1:6, L{end+1} = ['Sat.' k{j} ' = ' num(y0(j)) ';']; end %#ok<AGROW>
+sc = ~isnan(m.mass0_kg);
+if sc                     % GMAT draws each burn's propellant from the tank: Sat.Fuel.FuelMass is reported
+    L = [L; {''; '% The spacecraft: the electric propellant is counted in the dry mass, as only chemical burns fly here'
+             'Create ChemicalTank Fuel;'; ['Fuel.FuelMass = ' num(m.prop_chem_kg) ';']; 'Fuel.AllowNegativeFuelMass = true;'
+             'Fuel.FuelDensity = 1000;'; ['Fuel.Volume = ' num(m.prop_chem_kg/1000) ';']
+             ['Sat.DryMass = ' num(m.mass0_kg - m.prop_chem_kg) ';']; 'Sat.Tanks = {Fuel};'}];
+end
 L = [L; {''; 'Create ForceModel TwoBody;'; 'TwoBody.CentralBody = Earth;'; 'TwoBody.PointMasses = {Earth};'
          'Create Propagator Prop;'; 'Prop.FM = TwoBody;'; 'Prop.Type = RungeKutta89;'; 'Prop.InitialStepSize = 60;'
          'Prop.Accuracy = 1e-13;'; 'Prop.MinStep = 0;'; 'Prop.MaxStep = 600;'}];
 for b = 1:n
     L = [L; {''; sprintf('Create ImpulsiveBurn Burn%d;', b); sprintf('Burn%d.CoordinateSystem = EarthMJ2000Eq;', b)}]; %#ok<AGROW>
     for j = 1:3, L{end+1} = sprintf('Burn%d.Element%d = %s;', b, j, num(vplan(b, j + 1))); end %#ok<AGROW>
+    if sc
+        L = [L; {sprintf('Burn%d.DecrementMass = true;', b); sprintf('Burn%d.Tank = {Fuel};', b)
+                 sprintf('Burn%d.Isp = %s;', b, num(m.isp_chem)); sprintf('Burn%d.GravitationalAccel = %s;', b, num(C.G0*1e3))}]; %#ok<AGROW>
+    end
 end
 L = [L; {''; 'Create ReportFile Arrival;'; ['Arrival.Filename = ''' report ''';']; 'Arrival.Precision = 16;'
          'Arrival.WriteHeaders = true;'; ''; 'Create OrbitView View;'; 'View.Add = {Sat, Earth};'; ''
@@ -60,7 +71,8 @@ for b = 1:n
 end
 r2 = C.RE + m.alt2; ra2 = C.RE + a2;
 L{end+1} = ['Report Arrival ' strjoin(strcat('Sat.EarthMJ2000Eq.', k), ' ') ...
-            ' Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP;'];
+            ' Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP' ...
+            repmat(' Sat.Fuel.FuelMass', 1, sc) ';'];
 L{end+1} = ['Propagate Prop(Sat) {Sat.ElapsedSecs = ' num(2*pi*sqrt(((r2 + ra2)/2)^3/C.MU)) '};'];
 txt = [strjoin(L, newline) newline];
 end

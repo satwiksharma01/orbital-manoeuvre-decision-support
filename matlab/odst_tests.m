@@ -68,6 +68,56 @@ check('Edelbaum LEO -> GEO, di 28.5: plane change after the closed-form TOF [deg
 opts = odst_evaluate(odst_mission('di_deg', 120)); lt = opts(strcmp({opts.key}, 'low_thrust'));
 report(~lt.applicable, sprintf('Edelbaum not offered beyond 114.6 deg (di 120): applicable = %d (%s)', lt.applicable, lt.note));
 
+fprintf('\n=== 4c. Spacecraft model: masses, thrust, power, propellant on board ===\n');
+% Thrust 0.5 m0 g0 is the generic T/W 0.5: every chemical option is unchanged, propellant = m0 x fraction
+gen = odst_evaluate(odst_mission());
+scm = odst_mission('mass0_kg', 1000, 'thrust_chem_N', 0.5*1000*C.G0*1e3);
+sc = odst_evaluate(scm);
+k = ~strcmp({gen.key}, 'low_thrust');
+d = abs([gen(k).dv] - [sc(k).dv]) + abs([gen(k).dv_loss] - [sc(k).dv_loss]) + abs([gen(k).tof] - [sc(k).tof]);
+check('Spacecraft with thrust = 0.5 m0 g0 vs generic T/W 0.5: chemical options [dv + loss + TOF difference]', max(d), 0, 1e-9);
+check('  propellant = m0 x propellant fraction, Hohmann [kg]', sc(1).prop_kg, 1000*gen(1).prop_frac, 1e-9);
+% Electric thrust from power, F = 2 eta P / ve; the spiral then runs at constant thrust as the mass falls.
+% Integrate Edelbaum's averaged equations in time with a = F/m(t), yaw law in the velocity increment u.
+F = odst_ep_thrust(scm);
+check('Electric thrust 2 eta P / ve, 6.5 kW, eta 0.6, Isp 1600 s [N]', F, 2*0.6*6500/(1600*C.G0*1e3), 1e-12);
+lt = sc(strcmp({sc.key}, 'low_thrust'));
+r1 = RE + 400; r2 = RE + 35786; di = 28.5*pi/180; V0 = sqrt(C.MU/r1); V1 = sqrt(C.MU/r2);
+b0 = atan2(sin(pi/2*di), V0/V1 - cos(pi/2*di)); ve = 1600*C.G0; f0 = F*1e-3/1000;   % km/s^2
+yaw = @(u) atan2(V0*sin(b0), V0*cos(b0) - u);
+rhs = @(~, y) [-f0/y(3)*cos(yaw(y(4))); 2/pi*f0/y(3)*sin(yaw(y(4)))/y(1); -f0/ve; f0/y(3)];
+[~, yy] = ode45(rhs, [0 lt.tof], [V0; 0; 1; 0], odeset('RelTol', 1e-12, 'AbsTol', 1e-14));
+check('Constant-thrust spiral LEO -> GEO, di 28.5: speed after the closed-form TOF [km/s]', yy(end, 1), V1, 1e-8);
+check('  plane change after the closed-form TOF [deg]', yy(end, 2)*180/pi, 28.5, 1e-6);
+check('  mass left, m/m0, vs exp(-dv/ve)', yy(end, 3), exp(-lt.dv/ve), 1e-9);
+[~, tInf] = odst_lowthrust(r1, r2, di, 5e-4, 1e9); [~, tA] = odst_lowthrust(r1, r2, di, 5e-4);
+check('Constant thrust with Isp -> infinity becomes constant acceleration [TOF ratio]', tInf/tA, 1, 1e-6);
+% The propellant on board is a hard limit, at the same dv as the budget check (dv + loss, with the margin)
+need = 1000*(1 - exp(-(sc(1).dv + sc(1).dv_loss)*1.05/(sc(1).isp*C.G0)));
+on = odst_evaluate(odst_mission('mass0_kg', 1000, 'thrust_chem_N', 0.5*1000*C.G0*1e3, 'prop_chem_kg', need + 1e-6));
+off = odst_evaluate(odst_mission('mass0_kg', 1000, 'thrust_chem_N', 0.5*1000*C.G0*1e3, 'prop_chem_kg', need - 1e-6));
+report(on(1).feasible && ~off(1).feasible, sprintf(['Hohmann needs %.6f kg with the 5%% margin: feasible with ' ...
+       '1e-6 kg more on board, not with 1e-6 kg less'], need));
+[t, rec] = odst_evaluate(odst_mission('mass0_kg', 1000, 'prop_chem_kg', 600, 'prop_ep_kg', 350));
+report(strcmp(rec.key, 'low_thrust') && ~any([t(~strcmp({t.key}, 'low_thrust')).feasible]), sprintf(['600 kg of ' ...
+       'chemical propellant on board: every chemical option is out (%s); low thrust is recommended, %.0f kg in %.1f days'], ...
+       t(1).reasons, rec.prop_kg, rec.tof/86400));
+% Same as python/odst.py, default spacecraft, LEO -> GEO: [dv km/s, loss km/s, TOF s, propellant kg]
+pyRefSc = [4.221535383 0.014972551 19048.5625 740.762642; 4.19629709 0.015327503 19048.5625 738.698885
+           5.470508212 0.01867395 10862.2498 826.085245; 5.897522253 0 9888981.43 313.303212];
+o = odst_evaluate(odst_mission('mass0_kg', 1000)); o = o([o.applicable]);
+got = [[o.dv].', [o.dv_loss].', [o.tof].', [o.prop_kg].'];
+report(isequal(size(got), size(pyRefSc)) && max(max(abs(got(:, [1 2 4]) - pyRefSc(:, [1 2 4])))) < 1e-6 && ...
+       max(abs(got(:, 3) - pyRefSc(:, 3))) < 1e-3, sprintf(['Default spacecraft, LEO -> GEO: dv, loss, TOF and ' ...
+       'propellant of %d options as Python (largest propellant difference %.1e kg)'], size(got, 1), ...
+       max(abs(got(:, 4) - pyRefSc(:, 4)))));
+% The export carries the spacecraft: GMAT draws each burn's propellant from a tank (python/gmat_crosscheck.py)
+txt = odst_gmat_script(scm, sc(1)); js = jsondecode(odst_burns_json(scm, sc(1)));
+report(contains(txt, 'Sat.DryMass = 200;') && contains(txt, 'Fuel.FuelMass = 800;') && ...
+       count(txt, 'DecrementMass = true;') == 2 && js.spacecraft.mass0_kg == 1000 && js.spacecraft.propellant_kg == sc(1).prop_kg, ...
+       sprintf(['GMAT script with the spacecraft''s dry mass, an 800 kg tank and mass-decrementing burns; JSON with ' ...
+                'the propellant, %.1f kg'], sc(1).prop_kg));
+
 fprintf('\n=== 5. Elliptical orbits and Lambert ===\n');
 % Curtis, Orbital Mechanics for Engineering Students, Example 5.2
 r1v = [5000; 10000; 2100]; r2v = [-14600; 2500; 7000];
