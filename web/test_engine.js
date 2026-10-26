@@ -212,5 +212,45 @@ for (const x of [{ alt1: 400, alt2: 35786, elements: [51.6, 120, 0, 0, 0, 0] }, 
                 `|dh|/h=${dh.toExponential(1)} |de|=${de.toExponential(1)}`);
   }
 }
+// ---- spacecraft model (as python/validate.py section 4c)
+const scBase = { ...base, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6.5, eff_ep: 0.6, prop_ep_kg: 100 };
+{
+  const G = O.G0 * 1e3, gen = O.evaluate(base).opts, scm = { ...scBase, mass0_kg: 1000, thrust_chem_N: 0.5 * 1000 * G }, sc = O.evaluate(scm).opts;
+  const d = Math.max(...gen.map((a, i) => (a.key === "low_thrust" ? 0 : Math.abs(a.dv - sc[i].dv) + Math.abs(a.dv_loss - sc[i].dv_loss) + Math.abs(a.tof - sc[i].tof))));
+  check("Spacecraft with thrust = 0.5 m0 g0 vs generic T/W 0.5: chemical options [dv + loss + TOF difference]", d, 0, 1e-9);
+  check("  propellant = m0 x propellant fraction, Hohmann [kg]", sc[0].prop_kg, 1000 * gen[0].prop_frac, 1e-9);
+  const F = O.epThrust(scm);
+  check("Electric thrust 2 eta P / ve, 6.5 kW, eta 0.6, Isp 1600 s [N]", F, 2 * 0.6 * 6500 / (1600 * G), 1e-12);
+  // Edelbaum's averaged equations in time with a = F/m(t) and the yaw law in the velocity increment u (RK4, fine steps)
+  const lt = sc.find((o) => o.key === "low_thrust"), r1 = O.RE + 400, r2 = O.RE + 35786, di = 28.5 * Math.PI / 180;
+  const V0 = Math.sqrt(O.MU / r1), V1 = Math.sqrt(O.MU / r2), b0 = Math.atan2(Math.sin(Math.PI / 2 * di), V0 / V1 - Math.cos(Math.PI / 2 * di));
+  const ve = 1600 * O.G0, f0 = F * 1e-3 / 1000;
+  const f = ([V, , mr, u]) => { const b = Math.atan2(V0 * Math.sin(b0), V0 * Math.cos(b0) - u); return [-f0 / mr * Math.cos(b), 2 / Math.PI * f0 / mr * Math.sin(b) / V, -f0 / ve, f0 / mr]; };
+  let y = [V0, 0, 1, 0]; const n = 200000, h = lt.tof / n, ax = (a, k, c) => a.map((v, i) => v + k * c[i]);
+  for (let i = 0; i < n; i++) { const k1 = f(y), k2 = f(ax(y, h / 2, k1)), k3 = f(ax(y, h / 2, k2)), k4 = f(ax(y, h, k3)); y = y.map((v, j) => v + h / 6 * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j])); }
+  check("Constant-thrust spiral LEO -> GEO, di 28.5: speed after the closed-form TOF [km/s]", y[0], V1, 1e-8);
+  check("  plane change after the closed-form TOF [deg]", y[1] * 180 / Math.PI, 28.5, 1e-6);
+  check("  mass left, m/m0, vs exp(-dv/ve)", y[2], Math.exp(-lt.dv / ve), 1e-9);
+  check("Constant thrust with Isp -> infinity becomes constant acceleration [TOF ratio]", O.lowThrust(r1, r2, di, 5e-4, 1e9).tof / O.lowThrust(r1, r2, di, 5e-4).tof, 1, 1e-6);
+  // the propellant on board is a hard limit, at the same dv as the budget check
+  const need = 1000 * (1 - Math.exp(-(sc[0].dv + sc[0].dv_loss) * 1.05 / (sc[0].isp * O.G0)));
+  let ok = O.evaluate({ ...scm, prop_chem_kg: need + 1e-6 }).opts[0].feasible && !O.evaluate({ ...scm, prop_chem_kg: need - 1e-6 }).opts[0].feasible; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Hohmann needs ${need.toFixed(6)} kg with the 5% margin: feasible with 1e-6 kg more on board, not with 1e-6 kg less`);
+  const t = O.evaluate({ ...scBase, mass0_kg: 1000, prop_chem_kg: 600, prop_ep_kg: 350 });
+  ok = t.rec && t.rec.key === "low_thrust" && t.opts.every((o) => o.key === "low_thrust" || !o.feasible); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] 600 kg of chemical propellant on board: every chemical option is out (${t.opts[0].reasons[0]}); ` +
+              `low thrust is recommended, ${t.rec.prop_kg.toFixed(0)} kg in ${(t.rec.tof / 86400).toFixed(1)} days`);
+  // same as python/odst.py, default spacecraft, LEO -> GEO: [dv km/s, loss km/s, TOF s, propellant kg]
+  const ref = [[4.221535383, 0.014972551, 19048.5625, 740.762642], [4.19629709, 0.015327503, 19048.5625, 738.698885],
+               [5.470508212, 0.01867395, 10862.2498, 826.085245], [5.897522253, 0, 9888981.43, 313.303212]];
+  const got = O.evaluate({ ...scBase, mass0_kg: 1000 }).opts.filter((o) => o.applicable).map((o) => [o.dv, o.dv_loss, o.tof, o.prop_kg]);
+  ok = got.length === ref.length && got.every((g, i) => [0, 1, 3].every((j) => Math.abs(g[j] - ref[i][j]) < 1e-6) && Math.abs(g[2] - ref[i][2]) < 1e-3); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Default spacecraft, LEO -> GEO: dv, loss, TOF and propellant of ${got.length} options as Python`);
+  // the export carries the spacecraft
+  const txt = O.gmatScript(scm, sc[0]), js = JSON.parse(O.burnsJson(scm, sc[0]));
+  ok = txt.includes("Sat.DryMass = 200;") && txt.includes("Fuel.FuelMass = 800;") && txt.split("DecrementMass = true;").length === 3 &&
+       js.spacecraft.mass0_kg === 1000 && js.spacecraft.propellant_kg === sc[0].prop_kg; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] GMAT script with the spacecraft's dry mass, an 800 kg tank and mass-decrementing burns; JSON with the propellant, ${sc[0].prop_kg.toFixed(1)} kg`);
+}
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);
