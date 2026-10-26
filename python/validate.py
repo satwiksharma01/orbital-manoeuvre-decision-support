@@ -8,7 +8,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq, minimize_scalar
 
-from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, burns_json, evaluate,
+from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, burns_json, ep_thrust, evaluate,
                   gmat_script, gravity_loss, hohmann, hohmann_optimal_split, inertial_plan, kepler, lambert,
                   lambert_optimal, low_thrust, one_tangent, orbit_basis, orbit_elements, orbit_state, perifocal,
                   print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
@@ -117,6 +117,61 @@ lt = next(o for o in evaluate(Mission(di_deg=120)) if o.key == "low_thrust")
 ok = not lt.applicable
 fails += not ok
 print(f"[{'PASS' if ok else 'FAIL'}] Edelbaum not offered beyond 114.6 deg (di 120): applicable = {lt.applicable} ({lt.note})")
+
+print("\n=== 4c. Spacecraft model: masses, thrust, power, propellant on board ===")
+# Thrust 0.5 m0 g0 is the generic T/W 0.5: every chemical option is unchanged, propellant = m0 x fraction
+gen = evaluate(Mission())
+sc_m = Mission(mass0_kg=1000, thrust_chem_N=0.5 * 1000 * G0 * 1e3)
+sc = evaluate(sc_m)
+worst = max(abs(a.dv - b.dv) + abs(a.dv_loss - b.dv_loss) + abs(a.tof - b.tof) for a, b in zip(gen, sc) if a.key != "low_thrust")
+check("Spacecraft with thrust = 0.5 m0 g0 vs generic T/W 0.5: chemical options [dv + loss + TOF difference]", worst, 0.0, 1e-9)
+check("  propellant = m0 x propellant fraction, Hohmann [kg]", sc[0].prop_kg, 1000 * gen[0].prop_frac, 1e-9)
+# Electric thrust from power: F = 2 eta P / ve; the spiral then runs at constant thrust as the mass falls.
+# Integrate Edelbaum's averaged equations in time with a = F/m(t), yaw law in the velocity increment u.
+lt_o = next(o for o in sc if o.key == "low_thrust")
+F, ve = ep_thrust(sc_m) * 1e-3, sc_m.isp_ep * G0                 # kN, km/s
+check("Electric thrust 2 eta P / ve, 6.5 kW, eta 0.6, Isp 1600 s [N]", 1e3 * F, 2 * 0.6 * 6500 / (1600 * G0 * 1e3), 1e-12)
+r1, r2, di = sc_m.r1, sc_m.r2, math.radians(sc_m.di_deg)
+V0, V1 = vcirc(r1), vcirc(r2)
+b0 = math.atan2(math.sin(math.pi / 2 * di), V0 / V1 - math.cos(math.pi / 2 * di))
+f0 = F / 1000.0                                                    # km/s^2 for the 1000 kg spacecraft
+
+
+def mass_flow(t, y):
+    V, inc, mr, u = y
+    beta = math.atan2(V0 * math.sin(b0), V0 * math.cos(b0) - u)
+    return [-f0 / mr * math.cos(beta), 2 / math.pi * f0 / mr * math.sin(beta) / V, -f0 / ve, f0 / mr]
+
+
+Vf, incf, mrf, _ = solve_ivp(mass_flow, (0, lt_o.tof), [V0, 0, 1, 0], rtol=1e-12, atol=1e-14).y[:, -1]
+check("Constant-thrust spiral LEO -> GEO, di 28.5: speed after the closed-form TOF [km/s]", Vf, V1, 1e-8)
+check("  plane change after the closed-form TOF [deg]", math.degrees(incf), 28.5, 1e-6)
+check("  mass left, m/m0, vs exp(-dv/ve)", mrf, math.exp(-lt_o.dv / ve), 1e-9)
+_, tof_inf = low_thrust(r1, r2, di, 5e-4, isp=1e9)
+check("Constant thrust with Isp -> infinity becomes constant acceleration [TOF ratio]", tof_inf / low_thrust(r1, r2, di, 5e-4)[1], 1.0, 1e-6)
+# The propellant on board is a hard limit, at the same dv as the budget check (dv + loss, with the margin)
+h = sc[0]
+need = 1000 * (1 - math.exp(-(h.dv + h.dv_loss) * 1.05 / (h.isp * G0)))
+on = [o.feasible for o in evaluate(Mission(mass0_kg=1000, thrust_chem_N=0.5 * 1000 * G0 * 1e3, prop_chem_kg=need + 1e-6))]
+off = [o.feasible for o in evaluate(Mission(mass0_kg=1000, thrust_chem_N=0.5 * 1000 * G0 * 1e3, prop_chem_kg=need - 1e-6))]
+ok = on[0] and not off[0]
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Hohmann needs {need:.6f} kg with the 5% margin: feasible with 1e-6 kg more on board, "
+      f"not with 1e-6 kg less")
+t = evaluate(Mission(mass0_kg=1000, prop_chem_kg=600, prop_ep_kg=350))
+best = max((o for o in t if o.feasible), key=lambda o: o.score_ws)
+ok = best.key == "low_thrust" and all(not o.feasible for o in t if o.key != "low_thrust")
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] 600 kg of chemical propellant on board: every chemical option is out "
+      f"({t[0].reasons[0]}); low thrust is recommended, {best.prop_kg:.0f} kg in {best.tof / 86400:.1f} days")
+
+# The export carries the spacecraft: GMAT draws each burn's propellant from a tank (gmat_crosscheck.py section 3)
+txt, js = gmat_script(sc_m, sc[0]), json.loads(burns_json(sc_m, sc[0]))
+ok = ("Sat.DryMass = 200.0;" in txt and "Fuel.FuelMass = 800.0;" in txt and txt.count("DecrementMass = true;") == 2
+      and js["spacecraft"]["mass0_kg"] == 1000 and js["spacecraft"]["propellant_kg"] == sc[0].prop_kg)
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] GMAT script with the spacecraft's dry mass, an 800 kg tank and mass-decrementing burns; "
+      f"JSON with the propellant, {sc[0].prop_kg:.1f} kg")
 
 print("\n=== 5. Elliptical orbits and Lambert ===")
 # Curtis, Orbital Mechanics for Engineering Students, Example 5.2

@@ -66,10 +66,21 @@ class Mission:
     w1_deg: float = 0.0          # start periapsis, deg from the node line
     elements: tuple | None = None  # (i1, RAAN1, argp1, i2, RAAN2, argp2), deg; sets di_deg, w1_deg, dw_deg
     R: object = field(default=None, init=False, repr=False, compare=False)  # relative frame -> EarthMJ2000Eq
+    # spacecraft model: with mass0_kg set, the masses, thrust and power below set tw_chem and accel_ep,
+    # the electric thrust is constant (the spiral speeds up as the mass falls) and the propellant on board is a limit
+    mass0_kg: float | None = None  # wet mass at departure, kg; None = the generic T/W and F/m inputs
+    thrust_chem_N: float = 4900.0  # chemical engine thrust, N
+    prop_chem_kg: float = 800.0    # chemical propellant on board, kg
+    power_ep_kW: float = 6.5       # electric thruster input power, kW
+    eff_ep: float = 0.6            # electric thruster efficiency: jet power / input power
+    prop_ep_kg: float = 400.0      # electric propellant on board, kg
 
     def __post_init__(self):
         if self.elements is not None:
             self.di_deg, self.w1_deg, self.dw_deg, self.R = relative_geometry(self)
+        if self.mass0_kg is not None:
+            self.tw_chem = self.thrust_chem_N / (self.mass0_kg * G0 * 1e3)
+            self.accel_ep = ep_thrust(self) / self.mass0_kg
 
     @property
     def r1(self):
@@ -111,6 +122,7 @@ class Option:
     # filled by the decision layer
     dv_loss: float = 0.0      # finite-burn gravity loss, km/s
     prop_frac: float = float("nan")
+    prop_kg: float = float("nan")  # propellant mass, kg, with the spacecraft model
     feasible: bool = True
     reasons: list = field(default_factory=list)
     score_ws: float = float("nan")
@@ -245,13 +257,23 @@ def one_tangent_for_tof(r1, r2, di, tof_target, kmax=50.0):
 EDELBAUM_MAX_DI = 2.0   # rad (114.59 deg): the yaw angle sweeps pi/2 * di, which must not exceed pi
 
 
-def low_thrust(r1, r2, di, accel_ms2):
+def low_thrust(r1, r2, di, accel_ms2, isp=None):
     """Edelbaum continuous low-thrust transfer between circular orbits, valid for di <= 2 rad.
-    Beyond that the closed form's dv falls as di grows and its yaw law misses the target plane."""
+    Beyond that the closed form's dv falls as di grows and its yaw law misses the target plane.
+    accel_ms2 is the acceleration at departure. Without isp it stays constant: tof = dv / a. With
+    isp the thrust is constant and the mass falls: tof = ve / a (1 - exp(-dv / ve)). Edelbaum's dv
+    and yaw law are unchanged, as both depend only on the velocity increment u = integral of F/m dt."""
     v1, v2 = vcirc(r1), vcirc(r2)
     dv = math.sqrt(max(v1 ** 2 + v2 ** 2 - 2 * v1 * v2 * math.cos(math.pi / 2 * di), 0))
-    tof = dv / (accel_ms2 * 1e-3)
-    return dv, tof
+    if isp is None:
+        return dv, dv / (accel_ms2 * 1e-3)
+    ve = isp * G0
+    return dv, ve / (accel_ms2 * 1e-3) * (1 - math.exp(-dv / ve))
+
+
+def ep_thrust(m):
+    """Electric thrust, N, from input power: F = 2 eta P / ve (the jet power is eta P)."""
+    return 2 * m.eff_ep * m.power_ep_kW * 1e3 / (m.isp_ep * G0 * 1e3)
 
 
 # ------------------------------------------- elliptical orbits and Lambert
@@ -566,6 +588,8 @@ def evaluate(m: Mission):
             o.dv_loss = gravity_loss(o.legs, o.isp, m.tw_chem)
         # the propellant also pays for the finite-burn loss, as the budget check does
         o.prop_frac = 1.0 - math.exp(-(o.dv + o.dv_loss) / (o.isp * G0))
+        if m.mass0_kg is not None:
+            o.prop_kg = m.mass0_kg * o.prop_frac
     apply_rules(m, opts)
     score(m, opts)
     return opts
@@ -642,7 +666,7 @@ def _circular_options(m: Mission):
         opts.append(Option("one_tangent", "One-tangent burn (fast)", dv, tof, nb, m.isp_chem,
                            COMPLEXITY["one_tangent"], burn_plan=plan, params=extra, note=note))
 
-    dv, tof = low_thrust(r1, r2, di, m.accel_ep)
+    dv, tof = low_thrust(r1, r2, di, m.accel_ep, m.isp_ep if m.mass0_kg is not None else None)
     o = Option("low_thrust", "Low-thrust spiral (Edelbaum)", dv, tof, 0, m.isp_ep, COMPLEXITY["low_thrust"])
     if di > EDELBAUM_MAX_DI:
         o.applicable, o.note = False, "Edelbaum's closed form holds only up to Δi = 114.6°"
@@ -672,6 +696,13 @@ def apply_rules(m: Mission, opts):
         if o.key != "low_thrust" and m.propulsion == "electric":
             o.feasible = False
             o.reasons.append("no high-thrust (chemical) propulsion on board")
+        if m.mass0_kg is not None:          # the propellant on board must cover the same dv as the budget
+            onboard = m.prop_ep_kg if o.key == "low_thrust" else m.prop_chem_kg
+            prop = m.mass0_kg * (1 - math.exp(-need / (o.isp * G0)))
+            if prop > onboard:
+                o.feasible = False
+                o.reasons.append(f"needs {prop:.0f} kg of propellant with the {m.margin_pct:g}% margin, "
+                                 f"{onboard:.0f} kg on board")
 
 
 def rule_advice(m: Mission):
@@ -929,12 +960,21 @@ def gmat_script(m: Mission, o: Option, report="odst_arrival.txt"):
          f"Earth.Mu = {MU!r};", "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", f"Sat.Epoch = '{GMAT_EPOCH}';",
          "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;"]
     s += [f"Sat.{k} = {g(x)};" for k, x in zip(("X", "Y", "Z", "VX", "VY", "VZ"), y0)]
+    sc = m.mass0_kg is not None
+    if sc:                    # GMAT draws each burn's propellant from the tank: Sat.Fuel.FuelMass is reported
+        s += ["", "% The spacecraft: the electric propellant is counted in the dry mass, as only chemical burns fly here",
+              "Create ChemicalTank Fuel;", f"Fuel.FuelMass = {g(m.prop_chem_kg)};", "Fuel.AllowNegativeFuelMass = true;",
+              "Fuel.FuelDensity = 1000;", f"Fuel.Volume = {g(m.prop_chem_kg / 1000)};",       # a tank just big enough
+              f"Sat.DryMass = {g(m.mass0_kg - m.prop_chem_kg)};", "Sat.Tanks = {Fuel};"]
     s += ["", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
           "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
           "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"]
     for k, (_, dv) in enumerate(plan, 1):
         s += ["", f"Create ImpulsiveBurn Burn{k};", f"Burn{k}.CoordinateSystem = EarthMJ2000Eq;"]
         s += [f"Burn{k}.Element{j + 1} = {g(dv[j])};" for j in range(3)]
+        if sc:
+            s += [f"Burn{k}.DecrementMass = true;", f"Burn{k}.Tank = {{Fuel}};", f"Burn{k}.Isp = {g(m.isp_chem)};",
+                  f"Burn{k}.GravitationalAccel = {g(G0 * 1e3)};"]
     s += ["", "Create ReportFile Arrival;", f"Arrival.Filename = '{report}';", "Arrival.Precision = 16;",
           "Arrival.WriteHeaders = true;", "", "Create OrbitView View;", "View.Add = {Sat, Earth};",
           "", "BeginMissionSequence;"]
@@ -945,7 +985,8 @@ def gmat_script(m: Mission, o: Option, report="odst_arrival.txt"):
         s.append(f"Maneuver Burn{k}(Sat);")
         t = tb
     s += ["Report Arrival " + " ".join(f"Sat.EarthMJ2000Eq.{k}" for k in ("X", "Y", "Z", "VX", "VY", "VZ"))
-          + " Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP;",
+          + " Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP"
+          + (" Sat.Fuel.FuelMass;" if sc else ";"),
           f"Propagate Prop(Sat) {{Sat.ElapsedSecs = {g(2 * math.pi * math.sqrt(((m.r2 + m.ra2) / 2) ** 3 / MU))}}};"]
     return "\n".join(s) + "\n"
 
@@ -958,6 +999,9 @@ def burns_json(m: Mission, o: Option):
         "tool": "Orbital Manoeuvre Decision Support Tool", "transfer": o.name, "dv_kms": o.dv, "tof_s": o.tof,
         "start_orbit_alt_km": [p1, a1], "target_orbit_alt_km": [p2, a2], "di_deg": m.di_deg, "dw_deg": m.dw_deg,
         "w1_deg": m.w1_deg, "elements_deg": None if m.elements is None else [_num(x) for x in m.elements],
+        "spacecraft": None if m.mass0_kg is None else {
+            "mass0_kg": m.mass0_kg, "thrust_chem_N": m.thrust_chem_N, "isp_chem_s": m.isp_chem, "prop_chem_kg": m.prop_chem_kg,
+            "propellant_kg": _num(o.prop_kg)},
         "frame": _frame(m), "epoch_utc": GMAT_EPOCH, "mu_km3_s2": MU,
         "start_state_km_kms": [_num(x) for x in y0],
         "burns": [{"t_s": _num(t), "dv_kms": [_num(x) for x in dv], "dv_mag_kms": _num(np.linalg.norm(dv))}

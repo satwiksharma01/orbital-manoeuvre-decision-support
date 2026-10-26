@@ -6,6 +6,8 @@
    circular and elliptical missions, some given by orbital elements, and the orbit it arrives
    on is compared with the target: its angular-momentum and eccentricity vectors in
    EarthMJ2000Eq, so the plane and the apse line count, not only the shape.
+3. With the spacecraft model the script carries the spacecraft's mass and a chemical tank, and
+   GMAT draws each burn's propellant from it: GMAT's propellant used vs the tool's.
 
 Needs a local GMAT (https://sourceforge.net/projects/gmat/). Not run in CI.
 Run: python python/gmat_crosscheck.py [path/to/GmatConsole.exe]
@@ -21,7 +23,7 @@ from string import Template
 
 import numpy as np
 
-from odst import MU, RE, Mission, evaluate, gmat_script, hohmann, orbit_basis, perifocal, vcirc, vvis
+from odst import G0, MU, RE, Mission, evaluate, gmat_script, hohmann, orbit_basis, perifocal, vcirc, vvis
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = Path(__file__).resolve().parent
@@ -44,6 +46,10 @@ ELEMENTS = [Mission(alt1=400, alt2=35786, elements=(51.6, 120, 0, 0, 0, 0)),    
             Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0)),                   # RAAN change only
             Mission(alt1=250, apo1=35786, alt2=35786, elements=(6, 0, 178, 0, 0, 0)),          # GTO, apogee off the node
             Mission(alt1=400, alt2=600, apo2=39700, elements=(51.6, 30, 0, 63.4, 100, 270), tof_max_h=30)]
+
+SPACECRAFT = [Mission(mass0_kg=1000),                                                       # LEO -> GEO, defaults
+              Mission(alt1=250, apo1=35786, alt2=35786, di_deg=28.5, mass0_kg=2000, thrust_chem_N=2000,
+                      prop_chem_kg=1200, isp_chem=310)]                                     # GTO -> GEO
 
 
 def target_vectors(m):
@@ -145,6 +151,20 @@ def main():
             de = np.linalg.norm(np.cross(v, h) / MU - r / np.linalg.norm(r) - ecc * P)
             gm = f"; GMAT i {g[8]:.6f}, RAAN {g[9]:.6f}" if m.elements else ""
             report(dh < 1e-6 and de < 1e-6, f"{name} |dh|/h = {dh:.1e}, |de| = {de:.1e}{gm}")
+
+    print("\n=== 3. GMAT draws the propellant from a tank (spacecraft model) ===")
+    for m in SPACECRAFT:
+        for o in evaluate(m):
+            if not o.vec_plan or not o.applicable:
+                continue
+            g = gmat(console, lambda rep: gmat_script(m, o, rep))
+            if g is None:
+                report(False, f"{o.name}: GMAT run failed")
+                continue
+            used = m.prop_chem_kg - g[11]
+            ref = m.mass0_kg * (1 - math.exp(-o.dv / (m.isp_chem * G0)))     # impulsive: no gravity loss, no margin
+            report(abs(used - ref) < 1e-6, f"{m.mass0_kg:g} kg, {m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f} km: {o.name:36s} "
+                                           f"propellant used, GMAT {used:.6f} kg vs tool {ref:.6f} kg")
     print(f"\n{'ALL CHECKS PASSED' if not fails else f'{fails} CHECK(S) FAILED'}")
     sys.exit(fails)
 
