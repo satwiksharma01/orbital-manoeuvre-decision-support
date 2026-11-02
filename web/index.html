@@ -234,6 +234,8 @@ svg text { font-family: var(--font); font-variant-numeric: tabular-nums; }
 .scroll { overflow-x: auto; padding: 10px 10px 0; }
 .rank { min-width: 700px; display: grid; gap: 2px; }
 .rh, .r { display: grid; grid-template-columns: minmax(210px, 2fr) 74px 76px 52px 64px 74px minmax(150px, 1.4fr); align-items: center; column-gap: 12px; padding-inline: 12px; }
+.rank.mc .rh, .rank.mc .r { grid-template-columns: minmax(210px, 2fr) 74px 76px 52px 64px 74px 58px minmax(150px, 1.4fr); }
+.rank:not(.mc) .mc-col { display: none; }
 .rh { padding-block: 6px 8px; font-size: 12px; font-weight: 500; color: var(--label-3); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .r { min-height: 56px; padding-block: 8px; border-radius: 12px; cursor: pointer; transition: background-color 0.18s ease; will-change: transform; }
@@ -402,6 +404,17 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
           <label class="row" for="prop_ep_kg" hidden><span>Electric propellant</span><span class="field"><input id="prop_ep_kg" type="number" inputmode="decimal" min="0" step="any"><span class="unit">kg</span></span></label>
           <div class="row" id="derivedRow" hidden><span>Thrust they give</span><span class="ro" id="derived"></span></div>
           <label class="row" for="rb_max"><span>Max bi-elliptic apoapsis</span><span class="field"><input id="rb_max" type="number" inputmode="decimal" min="1" step="any" data-pos="1"><span class="unit">km</span></span></label>
+          <div class="row shape"><span id="g-uncert">Uncertainty</span>
+            <div class="seg" role="radiogroup" aria-labelledby="g-uncert" data-seg="uncert">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="uncert" id="un-0" value="off"><label for="un-0">Off</label>
+              <input type="radio" name="uncert" id="un-1" value="on"><label for="un-1">On</label>
+            </div>
+          </div>
+          <label class="row" for="sigma_isp_pct" hidden><span>Isp error, 1σ</span><span class="field"><input id="sigma_isp_pct" type="number" inputmode="decimal" min="0" max="10" step="any"><span class="unit">%</span></span></label>
+          <label class="row" for="sigma_thrust_pct" hidden><span>Thrust error, 1σ</span><span class="field"><input id="sigma_thrust_pct" type="number" inputmode="decimal" min="0" max="10" step="any"><span class="unit">%</span></span></label>
+          <label class="row" for="sigma_point_deg" hidden><span>Pointing error, 1σ per axis</span><span class="field"><input id="sigma_point_deg" type="number" inputmode="decimal" min="0" max="10" step="any"><span class="unit">°</span></span></label>
+          <label class="row" for="confidence_pct" hidden><span>Required chance</span><span class="field"><input id="confidence_pct" type="number" inputmode="decimal" min="0" max="100" step="any"><span class="unit">%</span></span></label>
         </div>
       </details>
     </form>
@@ -411,8 +424,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
       <div class="pair">
         <section class="card fig">
-          <div class="card-head"><h3>Trade space</h3><p>Δv against transfer time. Hollow markers break a constraint.</p></div>
-          <svg id="scatter" viewBox="0 0 560 330" role="img" aria-label="Delta-v against transfer time for each manoeuvre"></svg>
+          <div class="card-head"><h3>Trade space</h3><p>Propellant against transfer time. The line joins the Pareto front, the options no other beats on both. Hollow markers break a constraint.</p></div>
+          <svg id="scatter" viewBox="0 0 560 330" role="img" aria-label="Propellant against transfer time for each manoeuvre, with the Pareto front"></svg>
           <div class="tip" id="tip" hidden></div>
         </section>
         <section class="card fig">
@@ -428,7 +441,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <div class="card-head"><h3>Ranking</h3><p>Select a manoeuvre to draw it. Scores run from 0 to 1 across the feasible options.</p></div>
         <div class="scroll">
           <div class="rank" role="table" aria-label="Manoeuvre ranking">
-            <div class="rh" role="row"><span role="columnheader">Manoeuvre</span><span class="num" role="columnheader">Δv km/s</span><span class="num" role="columnheader">Time</span><span class="num" role="columnheader">Burns</span><span class="num" role="columnheader">Propellant</span><span class="num" role="columnheader">Complexity</span><span role="columnheader">Score</span></div>
+            <div class="rh" role="row"><span role="columnheader">Manoeuvre</span><span class="num" role="columnheader">Δv km/s</span><span class="num" role="columnheader">Time</span><span class="num" role="columnheader">Burns</span><span class="num" role="columnheader">Propellant</span><span class="num" role="columnheader">Complexity</span><span class="num mc-col" role="columnheader" title="Share of the Monte Carlo runs with errors that fit the limits">Chance</span><span role="columnheader">Score</span></div>
             <div id="rows" role="rowgroup"></div>
           </div>
         </div>
@@ -439,7 +452,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <ul id="rules"></ul>
       </section>
 
-      <footer>Models: Hohmann and bi-elliptic transfers with combined plane change, one-tangent burn (Vallado), Edelbaum low-thrust approximation and the Tsiolkovsky propellant fraction, in two-body motion with impulsive burns between circular orbits. Each manoeuvre's free parameter (plane-change split, bi-elliptic apoapsis, one-tangent apsis factor) is optimised numerically. Ranking uses weighted-sum scoring cross-checked with TOPSIS. The same engine runs in MATLAB and Python, where every burn plan is verified by orbit propagation and a Simulink finite-burn model.</footer>
+      <footer>Models: Hohmann and bi-elliptic transfers with combined plane change, one-tangent burn (Vallado), Edelbaum low-thrust approximation and the Tsiolkovsky propellant fraction, in two-body motion with impulsive burns between circular orbits. Each manoeuvre's free parameter (plane-change split, bi-elliptic apoapsis, one-tangent apsis factor) is optimised numerically. Ranking uses weighted-sum scoring cross-checked with TOPSIS. With uncertainty on, a Monte Carlo over Isp, thrust and pointing errors gives each manoeuvre's chance of fitting the limits. The same engine runs in MATLAB and Python, where every burn plan is verified by orbit propagation and a Simulink finite-burn model.</footer>
     </main>
   </div>
 </div>
@@ -570,6 +583,69 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   // Electric thrust, N, from input power: F = 2 eta P / ve (the jet power is eta P), as ep_thrust in odst.py.
   function epThrust(m) {
     return 2 * m.eff_ep * m.power_ep_kW * 1e3 / (m.isp_ep * G0 * 1e3);
+  }
+
+  // ------------------------------------------------- uncertainty (Monte Carlo), as odst.py
+  // Each run draws an Isp and a thrust error and, for each impulsive burn, a pointing error, trimmed straight after
+  // the burn at a cost of 2 dv sin(theta / 2). Burns end at their planned dv, so the thrust error changes the gravity
+  // loss and the low-thrust time. A fixed seed: every option, mission and engine uses the same runs.
+  const MC_RUNS = 4000;
+  // L'Ecuyer's MRG32k3a in floating point, like his reference code: every product is an exact integer below 2^53
+  function mrg32k3a(n, seed = [12345, 12345, 12345, 12345, 12345, 12345]) {
+    const m1 = 4294967087, m2 = 4294944443, u = new Float64Array(n);
+    let [x0, x1, x2, y0, y1, y2] = seed;
+    for (let k = 0; k < n; k++) {
+      let p1 = (1403580 * x1 - 810728 * x0) % m1, p2 = (527612 * y2 - 1370589 * y0) % m2;
+      if (p1 < 0) p1 += m1;
+      if (p2 < 0) p2 += m2;
+      [x0, x1, x2, y0, y1, y2] = [x1, x2, p1, y1, y2, p2];
+      u[k] = (p1 > p2 ? p1 - p2 : p1 - p2 + m1) * 2.328306549295727688e-10;
+    }
+    return u;
+  }
+  // MC_RUNS rows of 8 standard normals, Box-Muller on consecutive pairs: the Isp error, the thrust error, then the
+  // two pointing components of the first, second and third burn
+  let mcZ = null;
+  function mcNormals() {
+    if (mcZ) return mcZ;
+    const u = mrg32k3a(8 * MC_RUNS);
+    mcZ = [];
+    for (let k = 0; k < MC_RUNS; k++) {
+      const z = [];
+      for (let i = 8 * k; i < 8 * k + 8; i += 2) { const r = Math.sqrt(-2 * Math.log(u[i])), a = 2 * Math.PI * u[i + 1]; z.push(r * Math.cos(a), r * Math.sin(a)); }
+      mcZ.push(z);
+    }
+    return mcZ;
+  }
+  // Share of the runs in which option o fits the budget, the time limit and the propellant on board
+  function chance(m, o, Z = mcNormals()) {
+    const sc = m.mass0_kg != null, th = m.sigma_point_deg * Math.PI / 180, mg = 1 + (m.margin_pct ?? 5) / 100;
+    const lim = m.tof_max_h * 3600 * (1 + 1e-6), onboard = o.key === "low_thrust" ? m.prop_ep_kg : m.prop_chem_kg;
+    let fit = 0;
+    for (const z of Z) {
+      const isp = o.isp * (1 + m.sigma_isp_pct / 100 * z[0]), f = 1 + m.sigma_thrust_pct / 100 * z[1];
+      let dv = o.dv, tof = o.tof;
+      if (o.key === "low_thrust") {
+        const a = m.accel_ep * 1e-3 * f, ve = isp * G0;
+        tof = sc ? ve / a * (1 - Math.exp(-dv / ve)) : dv / a;
+      } else {
+        let trims = 0;
+        o.legs.forEach(([, d], j) => { trims += 2 * d * Math.sin(th * Math.hypot(z[2 + 2 * j], z[3 + 2 * j]) / 2); });
+        dv = o.dv + gravityLoss(o.legs, isp, (m.tw_chem ?? 0.5) * f) + trims;
+      }
+      const need = dv * mg;
+      if (need <= m.dv_budget && tof <= lim && (!sc || m.mass0_kg * (1 - Math.exp(-need / (isp * G0))) <= onboard)) fit++;
+    }
+    return fit / Z.length;
+  }
+  const pct = (p) => Math.floor(100 * p + 1e-9);   // rounded down, so 89.9 % never reads as a passing 90 %
+  // The Pareto front: feasible options that no feasible option beats on both propellant and time
+  function pareto(opts) {
+    const feas = opts.filter((o) => o.feasible);
+    opts.forEach((o) => {
+      o.pareto = o.feasible && !feas.some((p) => p.prop_frac <= o.prop_frac * (1 + 1e-9) && p.tof <= o.tof * (1 + 1e-9) &&
+                                                  (p.prop_frac < o.prop_frac * (1 - 1e-9) || p.tof < o.tof * (1 - 1e-9)));
+    });
   }
 
   // ------------------------------------------------- elliptical orbits and Lambert
@@ -862,7 +938,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
       o.prop_frac = 1 - Math.exp(-(o.dv + o.dv_loss) / (o.isp * G0));   // the propellant also pays for the loss
       o.prop_kg = m.mass0_kg != null ? m.mass0_kg * o.prop_frac : NaN;
-      o.reasons = []; o.feasible = o.applicable;
+      o.reasons = []; o.feasible = o.applicable; o.chance = NaN;
       if (!o.applicable) { o.reasons.push(o.note); continue; }
       const mg = m.margin_pct ?? 5, need = (o.dv + o.dv_loss) * (1 + mg / 100);
       if (need > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} + loss ${o.dv_loss.toFixed(3)} + ${mg}% margin = ${need.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
@@ -873,7 +949,12 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         const onboard = o.key === "low_thrust" ? m.prop_ep_kg : m.prop_chem_kg, prop = m.mass0_kg * (1 - Math.exp(-need / (o.isp * G0)));
         if (prop > onboard) { o.feasible = false; o.reasons.push(`needs ${prop.toFixed(0)} kg of propellant with the ${mg}% margin, ${(+onboard).toFixed(0)} kg on board`); }
       }
+      if (m.uncertainty && o.feasible) {   // out if it fits the limits in under the required share of the runs
+        o.chance = chance(m, o);
+        if (o.chance < m.confidence_pct / 100) { o.feasible = false; o.reasons.push(`fits the limits in ${pct(o.chance)}% of runs with the errors, ${m.confidence_pct}% required`); }
+      }
     }
+    pareto(opts);
     score(m, opts);
     const feas = opts.filter((o) => o.feasible);
     const rec = feas.length ? feas.reduce((b, o) => (o.score_ws > b.score_ws ? o : b)) : null;
@@ -1033,7 +1114,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
   const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
                 orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN,
-                kepler, circularVecPlan, gmatScript, burnsJson, perifocal, resolve, inertialPlan, epThrust };
+                kepler, circularVecPlan, gmatScript, burnsJson, perifocal, resolve, inertialPlan, epThrust, MC_RUNS, mrg32k3a,
+                mcNormals, chance, pct, pareto };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -1054,7 +1136,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const DEFAULT = { alt1: 400, alt2: 35786, apo1: null, apo2: null, dw_deg: 0, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
                     propulsion: "both", isp_chem: 320, tw_chem: 0.5, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced",
                     orient: "relative", inc1: 28.5, raan1: 0, argp1: 0, inc2: 0, raan2: 0, argp2: 0,   // elements: LEO at 28.5 deg -> GEO
-                    vehicle: "generic", mass0_kg: 1000, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6.5, eff_ep: 0.6, prop_ep_kg: 100 };
+                    vehicle: "generic", mass0_kg: 1000, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6.5, eff_ep: 0.6, prop_ep_kg: 100,
+                    uncert: "off", sigma_isp_pct: 1, sigma_thrust_pct: 2, sigma_point_deg: 0.5, confidence_pct: 90 };
   const EXAMPLES = [
     { label: "LEO → GEO", v: {} },
     { label: "High orbit, R = 15", v: { alt1: 621.863, alt2: 98621.863, di_deg: 0, tof_max_h: 1440, propulsion: "chemical", preset: "Propellant-critical" } },
@@ -1065,9 +1148,11 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     { label: "LEO → Molniya", v: { alt2: 600, apo2: 39700, dw_deg: 270, di_deg: 0, propulsion: "chemical" } },
     { label: "Kourou GTO", v: { alt1: 250, apo1: 35786, orient: "elements", inc1: 6, argp1: 178, propulsion: "chemical" } },
     { label: "Small tank", v: { vehicle: "spacecraft", prop_chem_kg: 500, prop_ep_kg: 350 } },
+    { label: "Monte Carlo", v: { uncert: "on", tof_max_h: 3300, preset: "Propellant-critical" } },
   ];
   const numIds = ["alt1", "apo1", "alt2", "apo2", "dw_deg", "di_deg", "inc1", "raan1", "argp1", "inc2", "raan2", "argp2",
-                  "mass0_kg", "thrust_chem_N", "prop_chem_kg", "power_ep_kW", "eff_ep", "prop_ep_kg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep"];
+                  "mass0_kg", "thrust_chem_N", "prop_chem_kg", "power_ep_kW", "eff_ep", "prop_ep_kg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep",
+                  "sigma_isp_pct", "sigma_thrust_pct", "sigma_point_deg", "confidence_pct"];
 
   // ---------------------------------------------------------------- springs
   // Apple-style parameters: response (s) and damping ratio. Re-targeting keeps the
@@ -1153,6 +1238,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     document.querySelector(`input[name="shape2"][value="${s.apo2 == null ? "circular" : "elliptical"}"]`).checked = true;
     document.querySelector(`input[name="orient"][value="${s.orient}"]`).checked = true;
     document.querySelector(`input[name="vehicle"][value="${s.vehicle}"]`).checked = true;
+    document.querySelector(`input[name="uncert"][value="${s.uncert}"]`).checked = true;
     showShapes();
     document.querySelector(`input[name="propulsion"][value="${s.propulsion}"]`).checked = true;
     setPreset(s.preset);
@@ -1161,6 +1247,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const elliptical = (k) => document.querySelector(`input[name="shape${k}"]:checked`).value === "elliptical";
   const byElements = () => document.querySelector('input[name="orient"]:checked').value === "elements";
   const bySpacecraft = () => document.querySelector('input[name="vehicle"]:checked').value === "spacecraft";
+  const byUncert = () => document.querySelector('input[name="uncert"]:checked').value === "on";
   function showShapes() {
     const e1 = elliptical(1), e2 = elliptical(2), el = byElements();
     $("apo1").closest(".row").hidden = !e1;
@@ -1171,6 +1258,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const sc = bySpacecraft();                                  // the spacecraft sets T/W and F/m
     ["mass0_kg", "thrust_chem_N", "prop_chem_kg", "power_ep_kW", "eff_ep", "prop_ep_kg"].forEach((id) => { $(id).closest(".row").hidden = !sc; });
     $("tw_chem").closest(".row").hidden = sc; $("accel_ep").closest(".row").hidden = sc; $("derivedRow").hidden = !sc;
+    ["sigma_isp_pct", "sigma_thrust_pct", "sigma_point_deg", "confidence_pct"].forEach((id) => { $(id).closest(".row").hidden = !byUncert(); });
     $("alt1-l").textContent = e1 ? "Initial periapsis" : "Initial altitude";
     $("alt2-l").textContent = e2 ? "Target periapsis" : "Target altitude";
   }
@@ -1196,6 +1284,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (!elliptical(2)) { m.apo2 = null; m.dw_deg = 0; }     // a circular target has no apse line
     if (byElements()) m.elements = [m.inc1, m.raan1, m.apo1 == null ? 0 : m.argp1, m.inc2, m.raan2, m.apo2 == null ? 0 : m.argp2];
     if (!bySpacecraft()) m.mass0_kg = null;
+    m.uncertainty = byUncert();
     return m;
   }
   function validate() {
@@ -1219,7 +1308,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   let frame = 0;
   const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; run({}); }); };
   numIds.forEach((id) => $(id).addEventListener("input", () => { clearExample(); schedule(); }));
-  document.querySelectorAll('input[name="shape1"], input[name="shape2"], input[name="orient"], input[name="vehicle"]').forEach((r) => r.addEventListener("change", () => {
+  document.querySelectorAll('input[name="shape1"], input[name="shape2"], input[name="orient"], input[name="vehicle"], input[name="uncert"]').forEach((r) => r.addEventListener("change", () => {
     showShapes(); layoutSeg(r.closest(".seg"), true); clearExample(); run({});
   }));
   document.querySelectorAll('input[name="propulsion"]').forEach((r) => r.addEventListener("change", () => {
@@ -1241,7 +1330,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (!validate()) {
       $("verdict").innerHTML = `<div class="v-head"><span class="chip-s bad">${ICON_WARN} Check inputs</span></div>
         <h2 class="v-name"><span class="main">Some values need fixing</span></h2>
-        <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero. An orbit's apoapsis can't be below its periapsis, and the propellant on board can't outweigh the spacecraft.</p>`;
+        <p class="v-why">Each highlighted field needs a number. Altitudes and limits can be zero or more; Isp, thrust and the apoapsis limit must be greater than zero. An orbit's apoapsis can't be below its periapsis, and the propellant on board can't outweigh the spacecraft. Errors go up to 10 % or 10°, the required chance up to 100 %.</p>`;
       return;
     }
     const m = O.resolve(readMission());
@@ -1312,7 +1401,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <dl class="v-stats">
           <div><dt>Total Δv</dt><dd>${r.dv.toFixed(3)}<small>km/s</small></dd></div>
           <div><dt>Transfer time</dt><dd>${tn}<small>${tu}</small></dd></div>
-          <div><dt>Burns</dt><dd>${r.burns || "Cont."}</dd></div>
+          ${isNaN(r.chance) ? `<div><dt>Burns</dt><dd>${r.burns || "Cont."}</dd></div>`
+                            : `<div><dt>Chance it fits</dt><dd>${O.pct(r.chance)}<small>%</small></dd></div>`}
           <div><dt>Propellant</dt><dd>${isNaN(r.prop_kg) ? `${(100 * r.prop_frac).toFixed(1)}<small>% of mass</small>` : `${r.prop_kg.toFixed(0)}<small>kg</small>`}</dd></div>
           <div><dt>Score</dt><dd>${r.score_ws.toFixed(2)}<small>of 1</small></dd></div>
         </dl>
@@ -1325,7 +1415,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
   // ---------------------------------------------------------------- ranking (FLIP re-sort)
   function renderTable(res, flip) {
-    const body = $("rows"), prev = new Map();
+    const body = $("rows"), prev = new Map(), mc = !!res.m.uncertainty;
+    body.closest(".rank").classList.toggle("mc", mc);
     if (flip) body.querySelectorAll(".r").forEach((r) => prev.set(r.dataset.key, r.getBoundingClientRect().top));
     body.innerHTML = "";
     const order = res.opts.slice().sort((a, b) => (b.feasible - a.feasible) || ((b.score_ws || 0) - (a.score_ws || 0)));
@@ -1341,7 +1432,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       r.innerHTML = `<div class="name" role="cell"><span class="dotc"></span><span class="nm"><b>${main}${top ? '<span class="tag">Recommended</span>' : ""}</b>${caption ? `<span>${caption}</span>` : ""}</span></div>
         ${isFinite(o.dv) ? `<span class="num" role="cell">${o.dv.toFixed(3)}</span><span class="num" role="cell">${fmtTs(o.tof)}</span><span class="num" role="cell">${o.burns || "Cont."}</span>
         <span class="num" role="cell">${propText(o)}</span>` : '<span class="num" role="cell">–</span>'.repeat(4)}<span class="num" role="cell">${o.complexity.toFixed(1)}</span>
-        <div class="score" role="cell">${o.feasible
+        ${mc ? `<span class="num" role="cell">${isNaN(o.chance) ? "–" : O.pct(o.chance) + "%"}</span>` : ""}<div class="score" role="cell">${o.feasible
           ? `<div class="track"><div class="bar"><i></i></div><span class="val">${o.score_ws.toFixed(2)}</span></div><span>TOPSIS ${o.score_topsis.toFixed(2)}</span>`
           : '<span>Not scored</span>'}</div>`;
       r.addEventListener("click", () => pick(o.key));
@@ -1373,7 +1464,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     let lx0 = Math.floor(Math.log10(Math.max(60, Math.min(...pts.map((o) => o.tof)))) - 0.15);
     let lx1 = Math.ceil(Math.log10(Math.max(...pts.map((o) => o.tof))) + 0.15);
     if (lx1 - lx0 < 2) lx1 = lx0 + 2;
-    const dmax = Math.max(...pts.map((o) => o.dv), m.dv_budget < 1.6 * Math.max(...pts.map((o) => o.dv)) ? m.dv_budget : 0) * 1.12;
+    const kg = m.mass0_kg != null, P = (o) => (kg ? o.prop_kg : 100 * o.prop_frac);
+    const dmax = (Math.max(...pts.map(P)) || 1) * 1.12;
     const X = (t) => L + (Math.log10(Math.max(t, 60)) - lx0) / (lx1 - lx0) * (W - L - R);
     const Y = (d) => H - B - d / dmax * (H - B - T);
     const step = niceStep(dmax / 5);
@@ -1386,19 +1478,17 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       el("text", { x: X(t), y: H - B + 18, "text-anchor": "middle", "font-size": 11.5 }, stat, { fill: "var(--label-3)" }).textContent = lab;
     });
     el("text", { x: L, y: H - 4, "font-size": 12 }, stat, { fill: "var(--label-2)" }).textContent = "Transfer time (log scale) →";
-    el("text", { x: L - 36, y: T + 2, "font-size": 12, transform: `rotate(-90 ${L - 36} ${T + 2})`, "text-anchor": "end" }, stat, { fill: "var(--label-2)" }).textContent = "Total Δv, km/s";
+    el("text", { x: L - 36, y: T + 2, "font-size": 12, transform: `rotate(-90 ${L - 36} ${T + 2})`, "text-anchor": "end" }, stat, { fill: "var(--label-2)" }).textContent = kg ? "Propellant, kg" : "Propellant, % of mass";
     if (m.tof_max_h * 3600 > 10 ** lx0 && m.tof_max_h * 3600 < 10 ** lx1) {
       const x = X(m.tof_max_h * 3600);
       el("line", { x1: x, x2: x, y1: T, y2: H - B, "stroke-dasharray": "3 4" }, stat, { stroke: "var(--bad)", strokeWidth: "1.3" });
       el("text", { x: x - 6, y: H - B - 8, "text-anchor": "end", "font-size": 11 }, stat, { fill: "var(--bad)" }).textContent = "Time limit";
     }
-    if (m.dv_budget < dmax) {
-      const y = Y(m.dv_budget);
-      el("line", { x1: L, x2: W - R, y1: y, y2: y, "stroke-dasharray": "3 4" }, stat, { stroke: "var(--bad)", strokeWidth: "1.3" });
-      el("text", { x: W - R, y: y - 6, "text-anchor": "end", "font-size": 11 }, stat, { fill: "var(--bad)" }).textContent = "Δv budget";
-    }
+    const front = pts.filter((o) => o.pareto).sort((a, b) => a.tof - b.tof);
+    if (front.length > 1) el("polyline", { points: front.map((o) => `${X(o.tof).toFixed(1)},${Y(P(o)).toFixed(1)}`).join(" "), fill: "none",
+                                           "stroke-dasharray": "5 4", "stroke-linejoin": "round" }, stat, { stroke: "var(--label-3)", strokeWidth: "1.5" });
     // targets + label de-collision
-    const placed = pts.map((o) => ({ o, x: X(o.tof), y: Y(o.dv) })).sort((a, b) => a.y - b.y);
+    const placed = pts.map((o) => ({ o, x: X(o.tof), y: Y(P(o)) })).sort((a, b) => a.y - b.y);
     const taken = [];
     placed.forEach((p) => {
       let ly = p.y + 4;
@@ -1420,7 +1510,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         g.addEventListener("click", () => pick(k));
         g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(k); } });
       }
-      g.setAttribute("aria-label", `${p.o.name}: ${p.o.dv.toFixed(3)} km/s, ${fmtTs(p.o.tof)}`);
+      g.setAttribute("aria-label", `${p.o.name}: propellant ${propText(p.o)}, ${fmtTs(p.o.tof)}${p.o.pareto ? ", on the Pareto front" : ""}`);
       const mark = g.querySelector(".mark"), sel = k === selected;
       mark.setAttribute("r", sel ? 7.5 : 6);
       Object.assign(mark.style, p.o.feasible ? { fill: col(k), stroke: "var(--surface)", strokeWidth: "2" } : { fill: "var(--surface)", stroke: col(k), strokeWidth: "2.2" });
@@ -1440,7 +1530,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (!o) return;
     const t = $("tip"), svg = $("scatter"), box = svg.getBoundingClientRect(), host = svg.parentElement.getBoundingClientRect();
     const s = box.width / 560;
-    t.innerHTML = `<b>${o.name}</b><br>Δv ${o.dv.toFixed(3)} km/s · ${fmtTs(o.tof)}<br>Propellant ${propText(o)} · ${o.feasible ? "score " + o.score_ws.toFixed(2) : o.reasons[0]}`;
+    const fit = o.feasible ? `score ${o.score_ws.toFixed(2)}${isNaN(o.chance) ? "" : ` · fits ${O.pct(o.chance)}% of runs`}${o.pareto ? " · Pareto front" : ""}` : o.reasons[0];
+    t.innerHTML = `<b>${o.name}</b><br>Propellant ${propText(o)} · ${fmtTs(o.tof)}<br>Δv ${o.dv.toFixed(3)} km/s · ${fit}`;
     t.hidden = false;
     let left = box.left - host.left + g.__x * s + 16, top = box.top - host.top + g.__y * s - 14;
     if (left + t.offsetWidth > host.width - 8) left = box.left - host.left + g.__x * s - t.offsetWidth - 16;

@@ -262,5 +262,49 @@ const scBase = { ...base, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6
        js.spacecraft.mass0_kg === 1000 && js.spacecraft.propellant_kg === sc[0].prop_kg; fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] GMAT script with the spacecraft's dry mass, an 800 kg tank and mass-decrementing burns; JSON with the propellant, ${sc[0].prop_kg.toFixed(1)} kg`);
 }
+// ---- uncertainty: Monte Carlo over Isp, thrust and pointing errors; the Pareto front (as python/validate.py section 4d)
+{
+  const u = O.mrg32k3a(5, [0, 0, 1234567, 0, 0, 1234567]).map((x) => Math.round(x / 2.328306549295727688e-10) + 1);
+  let ok = [1459213977, 2827710106, 4245671317, 3877608661, 2595287583].every((v, i) => u[i] === v); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] MRG32k3a reproduces the published test vector (seed 1234567, first five outputs)`);
+  // the same normals as Python: first and last run
+  const Z = O.mcNormals(), py = [[-0.847924823347079, 1.8460727873862615, 0.7028567229701457, -1.361475967116543, -1.6978660974898043, -0.3615845453046289, -0.7451327634504835, 0.953673039659349],
+    [0.3355242415679864, 0.630794942430949, -1.095285273790694, 1.0227744211709222, 0.7098950824471811, 0.858224862332908, -0.7171417966521667, -0.10778190475429406]];
+  check(`${O.MC_RUNS} runs of 8 normals: first and last run vs Python [largest difference]`,
+        Math.max(...[0, 1].flatMap((j) => Z[j ? O.MC_RUNS - 1 : 0].map((z, i) => Math.abs(z - py[j][i])))), 0, 1e-12);
+  check("  sum of all 32000 normals vs Python", Z.flat().reduce((a, b) => a + b, 0), -224.82505288590977, 1e-9);
+  // with every error zero, each run is the nominal one
+  const zero = { uncertainty: true, sigma_isp_pct: 0, sigma_thrust_pct: 0, sigma_point_deg: 0, confidence_pct: 90 };
+  ok = true;
+  for (const m of [base, { ...scBase, mass0_kg: 1000, prop_chem_kg: 500, prop_ep_kg: 350 }, { ...base, alt1: 250, apo1: 35786, propulsion: "chemical" },
+                   { ...base, weights: [0.25, 0.55, 0.05, 0.15], tof_max_h: 3300 }]) {
+    const a = O.evaluate(m).opts, b = O.evaluate({ ...m, ...zero }).opts;
+    ok = ok && a.every((o, i) => o.feasible === b[i].feasible) && b.every((o) => !o.feasible || o.chance === 1);
+  }
+  fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Errors set to zero, 4 missions: every feasible option fits in all runs, and feasibility is unchanged`);
+  // the same chances as Python, run for run (runs that fit, of 4000)
+  const err = { uncertainty: true, sigma_isp_pct: 1, sigma_thrust_pct: 2, sigma_point_deg: 0.5, confidence_pct: 90 };
+  const cases = [
+    ["Spacecraft near its tank limits", { ...scBase, ...err, mass0_kg: 1000, prop_chem_kg: 765, prop_ep_kg: 330, tof_max_h: 2800, confidence_pct: 0 },
+     { hohmann: 3328, hohmann_split: 3740, low_thrust: 3078 }],
+    ["Propellant-critical, 3300 h", { ...base, ...err, weights: [0.25, 0.55, 0.05, 0.15], tof_max_h: 3300 }, { hohmann: 4000, hohmann_split: 4000, one_tangent: 4000, low_thrust: 2577 }],
+    ["Small tank, 2800 h", { ...scBase, ...err, mass0_kg: 1000, prop_chem_kg: 500, prop_ep_kg: 350, tof_max_h: 2800 }, { low_thrust: 3325 }],
+    ["GTO -> GEO, budget 1.95 km/s", { ...base, ...err, alt1: 250, apo1: 35786, propulsion: "chemical", dv_budget: 1.95 }, { apse: 2725, lambert: 2708 }],
+    ["LEO -> GEO, budget 4.5 km/s, pointing 1.5 deg", { ...base, ...err, dv_budget: 4.5, sigma_point_deg: 1.5 }, { hohmann: 114, hohmann_split: 440 }],
+  ];
+  for (const [name, m, ref] of cases) {
+    const got = Object.fromEntries(O.evaluate(m).opts.filter((o) => !isNaN(o.chance)).map((o) => [o.key, Math.round(o.chance * O.MC_RUNS)]));
+    ok = JSON.stringify(got) === JSON.stringify(ref); fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] ${name}: runs that fit ${JSON.stringify(got)} (Python ${JSON.stringify(ref)})`);
+  }
+  // the rule: the spiral makes the 3300 h limit in 64 % of runs, so it is out and Hohmann is recommended
+  const a = O.evaluate({ ...base, weights: [0.25, 0.55, 0.05, 0.15], tof_max_h: 3300 }), b = O.evaluate(cases[1][1]), lt = b.opts.find((o) => o.key === "low_thrust");
+  ok = a.rec.key === "low_thrust" && !lt.feasible && b.rec.key === "hohmann" && lt.reasons.at(-1) === "fits the limits in 64% of runs with the errors, 90% required"; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Propellant-critical, 3300 h: ${a.rec.name} without errors; with them: ${lt.reasons.at(-1)}; recommended: ${b.rec.name}`);
+  const front = O.evaluate(base).opts.filter((o) => o.pareto).map((o) => o.key);
+  ok = JSON.stringify(front) === JSON.stringify(["hohmann_split", "one_tangent", "low_thrust"]); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] Pareto front of LEO -> GEO: ${front}`);
+}
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);
