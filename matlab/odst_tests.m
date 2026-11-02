@@ -118,6 +118,53 @@ report(contains(txt, 'Sat.DryMass = 200;') && contains(txt, 'Fuel.FuelMass = 800
        sprintf(['GMAT script with the spacecraft''s dry mass, an 800 kg tank and mass-decrementing burns; JSON with ' ...
                 'the propellant, %.1f kg'], sc(1).prop_kg));
 
+fprintf('\n=== 4d. Uncertainty: Monte Carlo over Isp, thrust and pointing errors; the Pareto front ===\n');
+u = odst_mrg32k3a(5, [0 0 1234567 0 0 1234567]);
+report(isequal(round(u.'/2.328306549295727688e-10) + 1, [1459213977 2827710106 4245671317 3877608661 2595287583]), ...
+       'MRG32k3a reproduces the published test vector (seed 1234567, first five outputs)');
+% the same normals as Python: first and last run
+Z = odst_mc_normals();
+py = [-0.847924823347079 1.8460727873862615 0.7028567229701457 -1.361475967116543 -1.6978660974898043 -0.3615845453046289 -0.7451327634504835 0.953673039659349
+      0.3355242415679864 0.630794942430949 -1.095285273790694 1.0227744211709222 0.7098950824471811 0.858224862332908 -0.7171417966521667 -0.10778190475429406];
+check('4000 runs of 8 normals: first and last run vs Python [largest difference]', max(max(abs([Z(1, :); Z(end, :)] - py))), 0, 1e-12);
+check('  sum of all 32000 normals vs Python', sum(Z(:)), -224.82505288590977, 1e-9);
+% with every error zero, each run is the nominal one
+zero = {'uncertainty', true, 'sigma_isp_pct', 0, 'sigma_thrust_pct', 0, 'sigma_point_deg', 0};
+ms = {{}, {'mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350}, {'alt1', 250, 'apo1', 35786, 'propulsion', 'chemical'}, ...
+      {'weights', [0.25 0.55 0.05 0.15], 'tof_max_h', 3300}};
+ok = true;
+for c = 1:numel(ms)
+    a = odst_evaluate(odst_mission(ms{c}{:})); b = odst_evaluate(odst_mission(ms{c}{:}, zero{:}));
+    ok = ok && isequal([a.feasible], [b.feasible]) && all([b([b.feasible]).chance] == 1);
+end
+report(ok, 'Errors set to zero, 4 missions: every feasible option fits in all runs, and feasibility is unchanged');
+% the same chances as Python, run for run (runs that fit, of 4000)
+mcCases = {'Spacecraft near its tank limits', {'mass0_kg', 1000, 'prop_chem_kg', 765, 'prop_ep_kg', 330, 'tof_max_h', 2800, 'confidence_pct', 0}, ...
+              {'hohmann', 3328; 'hohmann_split', 3740; 'low_thrust', 3078}
+           'Propellant-critical, 3300 h', {'weights', [0.25 0.55 0.05 0.15], 'tof_max_h', 3300}, ...
+              {'hohmann', 4000; 'hohmann_split', 4000; 'one_tangent', 4000; 'low_thrust', 2577}
+           'Small tank, 2800 h', {'mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350, 'tof_max_h', 2800}, {'low_thrust', 3325}
+           'GTO -> GEO, budget 1.95 km/s', {'alt1', 250, 'apo1', 35786, 'propulsion', 'chemical', 'dv_budget', 1.95}, {'apse', 2725; 'lambert', 2708}
+           'LEO -> GEO, budget 4.5 km/s, pointing 1.5 deg', {'dv_budget', 4.5, 'sigma_point_deg', 1.5}, {'hohmann', 114; 'hohmann_split', 440}};
+for c = 1:size(mcCases, 1)
+    opts = odst_evaluate(odst_mission('uncertainty', true, mcCases{c, 2}{:}));
+    got = opts(~isnan([opts.chance])); ref = mcCases{c, 3};
+    txt = strjoin(arrayfun(@(o) sprintf('%s %d', o.key, round(o.chance*4000)), got, 'UniformOutput', false), ', ');
+    report(isequal({got.key}, ref(:, 1).') && isequal(round([got.chance]*4000), [ref{:, 2}]), ...
+           sprintf('%s: runs that fit %s (Python %s)', mcCases{c, 1}, txt, ...
+                   strjoin(cellfun(@(k, n) sprintf('%s %d', k, n), ref(:, 1).', ref(:, 2).', 'UniformOutput', false), ', ')));
+end
+% the rule: the spiral makes the 3300 h limit in 64 % of runs, so it is out and Hohmann is recommended
+[~, a] = odst_evaluate(odst_mission('weights', [0.25 0.55 0.05 0.15], 'tof_max_h', 3300));
+[opts, b] = odst_evaluate(odst_mission('weights', [0.25 0.55 0.05 0.15], 'tof_max_h', 3300, 'uncertainty', true));
+lt = opts(strcmp({opts.key}, 'low_thrust'));
+report(strcmp(a.key, 'low_thrust') && ~lt.feasible && strcmp(b.key, 'hohmann') && ...
+       strcmp(lt.reasons, 'fits the limits in 64% of runs with the errors, 90% required'), ...
+       sprintf('Propellant-critical, 3300 h: %s without errors; with them: %s; recommended: %s', a.name, lt.reasons, b.name));
+opts = odst_evaluate(odst_mission());
+front = {opts([opts.pareto]).key};
+report(isequal(front, {'hohmann_split', 'one_tangent', 'low_thrust'}), ['Pareto front of LEO -> GEO: ' strjoin(front, ', ')]);
+
 fprintf('\n=== 5. Elliptical orbits and Lambert ===\n');
 % Curtis, Orbital Mechanics for Engineering Students, Example 5.2
 r1v = [5000; 10000; 2100]; r2v = [-14600; 2500; 7000];

@@ -5,12 +5,13 @@ function loss = odst_gravity_loss(legs, isp, tw)
 %   legs: one row [radius km, dv km/s] per burn. Matches a
 %   fixed-attitude burn within ~5 % for tw >= 0.2 and overestimates a
 %   velocity-tracking burn about 2x (python/validate.py, section 4).
+%   isp and tw may be column vectors (the Monte Carlo runs).
 C = odst_const();
 ve = isp*C.G0; m = 1; loss = 0;
 for k = 1:size(legs, 1)
     r = legs(k, 1); dv = legs(k, 2);
-    tau = isp/tw*m*(1 - exp(-dv/ve));
-    loss = loss + dv*(sqrt(C.MU/r^3)*tau)^2/24;
-    m = m*exp(-dv/ve);
+    tau = isp./tw.*m.*(1 - exp(-dv./ve));
+    loss = loss + dv*(sqrt(C.MU/r^3)*tau).^2/24;
+    m = m.*exp(-dv./ve);
 end
 end

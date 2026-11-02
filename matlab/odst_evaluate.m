@@ -6,7 +6,9 @@ function [opts, rec, advice] = odst_evaluate(m)
 %          key, name, dv [km/s], tof [s], burns, isp [s], complexity,
 %          applicable, note, plan (burn plan), params, prop_frac (mp/m0),
 %          prop_kg (propellant mass, with the spacecraft model),
-%          feasible, reasons, score_ws, score_topsis
+%          feasible, reasons, chance (share of the Monte Carlo runs that fit the
+%          limits, with m.uncertainty), pareto (on the propellant-time Pareto front),
+%          score_ws, score_topsis
 %   rec    recommended option (highest weighted-sum score among feasible), or []
 %   advice cellstr of rule-of-thumb statements (rule-based decision matrix)
 %
@@ -45,6 +47,7 @@ for i = 1:numel(opts)
     opts(i).prop_kg = m.mass0_kg*opts(i).prop_frac;            % NaN without the spacecraft model
 end
 opts = applyRules(m, opts);
+opts = paretoFront(opts);
 opts = scoreOptions(m, opts);
 
 rec = [];
@@ -215,7 +218,7 @@ o = struct('key', key, 'name', name, 'dv', dv, 'tof', tof, 'burns', burns, ...
            'isp', isp, 'complexity', cplx, 'applicable', true, 'note', '', ...
            'plan', plan, 'y0', [], 'vplan', zeros(0, 4), 'legs', zeros(0, 2), ...
            'params', params, 'dv_loss', 0, 'prop_frac', NaN, 'prop_kg', NaN, 'feasible', true, ...
-           'reasons', '', 'score_ws', NaN, 'score_topsis', NaN);
+           'reasons', '', 'chance', NaN, 'pareto', false, 'score_ws', NaN, 'score_topsis', NaN);
 end
 
 % ------------------------------------------- rule-based feasibility filter
@@ -256,9 +259,61 @@ for i = 1:numel(opts)
                                    prop, m.margin_pct, onboard); %#ok<AGROW>
             end
         end
+        if m.uncertainty && o.feasible     % out if it fits the limits in under the required share of the runs
+            o.chance = chance(m, o);
+            if o.chance < m.confidence_pct/100
+                o.feasible = false;
+                r{end+1} = sprintf('fits the limits in %d%% of runs with the errors, %g%% required', ...
+                                   floor(100*o.chance + 1e-9), m.confidence_pct); %#ok<AGROW>
+            end
+        end
     end
     o.reasons = strjoin(r, '; ');
     opts(i) = o;
+end
+end
+
+% Share of the Monte Carlo runs (odst_mc_normals) in which option o fits the budget, the time
+% limit and the propellant on board (chance in odst.py). Each run draws an Isp and a thrust
+% error and, for each impulsive burn, a pointing error, trimmed straight after the burn at a
+% cost of |dv flown - dv planned| = 2 dv sin(theta/2). Burns end at their planned dv
+% (accelerometer cutoff), so the thrust error changes the gravity loss and the low-thrust time.
+function p = chance(m, o)
+C = odst_const(); Z = odst_mc_normals();
+isp = o.isp*(1 + m.sigma_isp_pct/100*Z(:, 1));
+f = 1 + m.sigma_thrust_pct/100*Z(:, 2);
+sc = ~isnan(m.mass0_kg);
+if strcmp(o.key, 'low_thrust')
+    dv = o.dv; a = m.accel_ep*1e-3*f; ve = isp*C.G0;
+    if sc, tof = ve./a.*(1 - exp(-dv./ve)); else, tof = dv./a; end
+else
+    th = m.sigma_point_deg*pi/180; trims = 0;
+    for j = 1:size(o.legs, 1)
+        trims = trims + 2*o.legs(j, 2)*sin(th*hypot(Z(:, 1 + 2*j), Z(:, 2 + 2*j))/2);
+    end
+    dv = o.dv + odst_gravity_loss(o.legs, isp, m.tw_chem*f) + trims;
+    tof = o.tof;
+end
+need = dv*(1 + m.margin_pct/100);
+ok = need <= m.dv_budget & tof <= m.tof_max_h*3600*(1 + 1e-6);
+if sc
+    if strcmp(o.key, 'low_thrust'), onboard = m.prop_ep_kg; else, onboard = m.prop_chem_kg; end
+    ok = ok & m.mass0_kg*(1 - exp(-need./(isp*C.G0))) <= onboard;
+end
+p = mean(ok);
+end
+
+% The Pareto front: feasible options that no feasible option beats on both propellant and time
+function opts = paretoFront(opts)
+f = find([opts.feasible]);
+for i = f
+    o = opts(i); beaten = false;
+    for j = f
+        p = opts(j);
+        beaten = beaten || (p.prop_frac <= o.prop_frac*(1 + 1e-9) && p.tof <= o.tof*(1 + 1e-9) && ...
+                            (p.prop_frac < o.prop_frac*(1 - 1e-9) || p.tof < o.tof*(1 - 1e-9)));
+    end
+    opts(i).pareto = ~beaten;
 end
 end
 
