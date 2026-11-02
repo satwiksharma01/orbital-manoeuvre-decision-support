@@ -6,6 +6,9 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 ### Added
 
+- **Uncertainty:** an optional Monte Carlo over Isp, thrust and pointing errors (1σ, default 1 %, 2 % and 0.5° per axis), in Python (`Mission(uncertainty=True)`), MATLAB (`'uncertainty'`) and the web, behind an Uncertainty toggle in both planners; off by default. Each option that meets the limits is flown 4,000 times, each burn trimmed straight after it at the cost of its error. Each option gets the share of runs that fit the budget, the time limit and the propellant on board, and is ruled out below the required share (default 90 %). The generator is L'Ecuyer's MRG32k3a with a fixed seed, so all three engines give the same chances. New example: Monte Carlo.
+- **Pareto front:** the options no other feasible option beats on both propellant and time are marked in all three engines and joined on the trade-space chart.
+
 - **Spacecraft model:** a wet mass, chemical thrust, electric power and efficiency, and the chemical and electric propellant on board can be entered instead of a thrust-to-weight and an acceleration, in Python (`Mission(mass0_kg=...)`), MATLAB (`'mass0_kg'`) and the web, behind a Vehicle toggle in both planners; the generic inputs stay the default. The thrust and mass set the thrust-to-weight, the electric thrust is 2ηP/vₑ and stays constant as the mass falls (the spiral time is vₑ/a₀ (1 − e^(−Δv/vₑ))), propellant reads in kg, and an option needing more propellant than is on board is ruled out. The GMAT script carries the spacecraft and a chemical tank. New example: Small tank.
 - **Orbital elements:** each orbit's inclination, RAAN and argument of periapsis can be entered instead of an inclination change, in Python (`Mission(elements=...)`), MATLAB (`'elements'`) and the web, behind an Orientation toggle in both planners; the inclination change stays the default. The models get the angle between the planes and each periapsis measured from the node line; apse-to-apse and Lambert accept a start periapsis off the node line. The GMAT script and JSON hold the orbits as entered, in EarthMJ2000Eq, and the script also reports RAAN and argument of periapsis. New example: Kourou GTO (i 6°, ω 178°) to GEO.
 - **GMAT export:** the web planner and the MATLAB app save the selected transfer as a NASA GMAT script and a JSON file of its burns; Python has `gmat_script` and `burns_json`. The script flies the burn plan from the start state with the tool's physics, including its Earth μ, and reports the orbit it arrives on.
@@ -16,7 +19,9 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 - **Circular transfers' burn plans** now turn the plane toward the target plane itself and change plane on the node line, so they arrive in the right plane, not only at the right inclination. A raising one-tangent transfer starts earlier on the circular orbit for this. Δv and flight times are unchanged.
 - **Kepler propagator:** hyperbolic arcs start Newton from Vallado's guess; the elliptic one overflowed on a fast 59 km/s Lambert arc.
-- **Test suites:** `validate.py` 108 checks, `odst_tests.m` 126, `test_engine.js` 121; the GMAT cross-check runs 36 checks, 33 of them on exported scripts.
+- **Trade-space chart:** it plots propellant (% of mass, or kg with a spacecraft) against time instead of Δv, so the low-thrust spiral, which needs more Δv but far less propellant, can sit on the Pareto front. The Δv budget line is gone from it; the budget still rules options out.
+- **MATLAB app:** the window is 1,560 px wide (was 1,460), so the new example fits in the top bar.
+- **Test suites:** `validate.py` 119 checks, `odst_tests.m` 137, `test_engine.js` 132; the GMAT cross-check runs 51 checks, 48 of them on exported scripts.
 - **Result figures:** the case A and B bars were regenerated, so their propellant fractions include the gravity loss (finding 9). The decision map came out identical.
 - **Repository:** removed an unused screenshot and the backup copy Simulink kept when it upgraded the model; `*.slx.r20*` is now ignored.
 
