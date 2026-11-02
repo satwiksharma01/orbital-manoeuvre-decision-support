@@ -3,15 +3,18 @@ import json
 import math
 import re
 import sys
+from dataclasses import replace
 
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import quad, solve_ivp
 from scipy.optimize import brentq, minimize_scalar
+from scipy.stats import kstest, norm
 
-from odst import (G0, H_ARC_MIN, MU, RE, Mission, apse_transfer, arc_min_radius, bielliptic, burns_json, ep_thrust, evaluate,
-                  gmat_script, gravity_loss, hohmann, hohmann_optimal_split, inertial_plan, kepler, lambert,
-                  lambert_optimal, low_thrust, one_tangent, orbit_basis, orbit_elements, orbit_state, perifocal,
-                  print_table, simulate, simulate_vec, target_mismatch, vcirc, vvis)
+from odst import (G0, H_ARC_MIN, MC_RUNS, MU, RE, Mission, _rotate, apse_transfer, arc_min_radius, bielliptic, burns_json,
+                  chance, ep_thrust, evaluate, gmat_script, gravity_loss, hohmann, hohmann_optimal_split, inertial_plan,
+                  kepler, lambert, lambert_optimal, low_thrust, mc_normals, mrg32k3a, one_tangent, orbit_basis,
+                  orbit_elements, orbit_state, perifocal, print_table, recommend, simulate, simulate_vec,
+                  target_mismatch, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 fails = 0
@@ -172,6 +175,116 @@ ok = ("Sat.DryMass = 200.0;" in txt and "Fuel.FuelMass = 800.0;" in txt and txt.
 fails += not ok
 print(f"[{'PASS' if ok else 'FAIL'}] GMAT script with the spacecraft's dry mass, an 800 kg tank and mass-decrementing burns; "
       f"JSON with the propellant, {sc[0].prop_kg:.1f} kg")
+
+print("\n=== 4d. Uncertainty: Monte Carlo over Isp, thrust and pointing errors; the Pareto front ===")
+# The generator: MRG32k3a's published test vector (Rosetta Code: seed 1234567, outputs (x1 - x2) mod m1 + 1)
+u = mrg32k3a(5, (0, 0, 1234567, 0, 0, 1234567))
+ok = [round(x / 2.328306549295727688e-10) + 1 for x in u] == [1459213977, 2827710106, 4245671317, 3877608661, 2595287583]
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] MRG32k3a reproduces the published test vector (seed 1234567, first five outputs)")
+Z = mc_normals()
+ks = kstest(Z.ravel(), "norm").pvalue
+cmax = np.max(np.abs(np.corrcoef(Z.T) - np.eye(8)))
+ok = ks > 0.01 and abs(Z.mean()) < 3 / math.sqrt(Z.size) and abs(Z.std() - 1) < 3 / math.sqrt(2 * Z.size) and cmax < 3 / math.sqrt(MC_RUNS)
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] {Z.size} Box-Muller normals vs N(0, 1): KS p = {ks:.2f}, mean {Z.mean():.4f}, "
+      f"sd {Z.std():.4f}, largest correlation between the 8 columns {cmax:.3f} (3 sigma {3 / math.sqrt(MC_RUNS):.3f})")
+# With every error zero, each run is the nominal one: nothing changes
+nominal = cases + [Mission(mass0_kg=1000, prop_chem_kg=500, prop_ep_kg=350), Mission(alt1=500, apo1=39000, alt2=35786, di_deg=63.4),
+                   Mission(weights=(0.25, 0.55, 0.05, 0.15), tof_max_h=3300)]
+ok = True
+for m in nominal:
+    a = evaluate(m)
+    b = evaluate(replace(m, uncertainty=True, sigma_isp_pct=0.0, sigma_thrust_pct=0.0, sigma_point_deg=0.0))
+    ok &= [o.feasible for o in a] == [o.feasible for o in b] and all(o.chance == 1.0 for o in b if o.feasible)
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Errors set to zero, {len(nominal)} missions: every feasible option fits in all {MC_RUNS} runs, "
+      f"and feasibility is unchanged")
+# Pointing alone, Hohmann LEO -> GEO: each burn's trim is 2 dv sin(theta/2), theta = sigma x Rayleigh. The chance
+# that both trims fit, from the Rayleigh distribution by quadrature, set to 80 % by the budget.
+o = evaluate(Mission())[0]
+(_, d1), (_, d2) = o.legs
+s = math.radians(1.0)
+F2 = lambda y: 0.0 if y <= 0 else 1.0 if y >= 2 * d2 else 1 - math.exp(-(2 * math.asin(y / (2 * d2)) / s) ** 2 / 2)
+P2 = lambda x: quad(lambda r: r * math.exp(-r * r / 2) * F2(x - 2 * d1 * math.sin(s * r / 2)), 0, 12, limit=200)[0]
+x80 = brentq(lambda x: P2(x) - 0.8, 1e-6, 0.5)
+m = Mission(dv_budget=(o.dv + o.dv_loss + x80) * 1.05, uncertainty=True, sigma_isp_pct=0, sigma_thrust_pct=0, sigma_point_deg=1.0)
+se = math.sqrt(0.8 * 0.2 / MC_RUNS)
+check(f"Pointing 1 deg alone, Hohmann: chance vs the Rayleigh quadrature, 0.8 [3 sigma of {MC_RUNS} runs]", evaluate(m)[0].chance, 0.8, round(3 * se, 4))
+# Isp alone, spacecraft spiral: it fits while Isp >= the Isp that just empties the tank, so the chance is a normal tail
+lt_dv = next(o for o in evaluate(Mission()) if o.key == "low_thrust").dv
+isp_star = 1600 * (1 + 0.02 * norm.ppf(0.25))
+m = Mission(mass0_kg=1000, prop_chem_kg=500, prop_ep_kg=1000 * (1 - math.exp(-lt_dv * 1.05 / (isp_star * G0))),
+            uncertainty=True, sigma_isp_pct=2.0, sigma_thrust_pct=0, sigma_point_deg=0)
+se = math.sqrt(0.75 * 0.25 / MC_RUNS)
+check("Isp 2 % alone, spacecraft spiral: chance its propellant fits vs the normal tail, 0.75 [3 sigma]",
+      next(o for o in evaluate(m) if o.key == "low_thrust").chance, 0.75, round(3 * se, 4))
+# Thrust alone, generic spiral: it makes the time limit while thrust >= dv / (a T)
+lt = next(o for o in evaluate(Mission()) if o.key == "low_thrust")
+T_h = lt.tof / 3600 / (1 + 0.02 * norm.ppf(0.4))
+m = Mission(tof_max_h=T_h, uncertainty=True, sigma_isp_pct=0, sigma_thrust_pct=2.0, sigma_point_deg=0)
+ref = norm.sf((lt.dv / (m.accel_ep * 1e-3 * T_h * 3600 * (1 + 1e-6)) - 1) / 0.02)
+check(f"Thrust 2 % alone, spiral against a {T_h:.0f} h limit: chance vs the normal tail, {ref:.4f} [3 sigma]",
+      next(o for o in evaluate(m) if o.key == "low_thrust").chance, ref, round(3 * math.sqrt(ref * (1 - ref) / MC_RUNS), 4))
+# All errors together, spacecraft near its tank limits: the 4000 runs against 400 000 runs from another generator
+m = Mission(mass0_kg=1000, prop_chem_kg=765, prop_ep_kg=330, tof_max_h=2800, uncertainty=True, confidence_pct=0)
+Zr = np.random.default_rng(1).standard_normal((400000, 8))
+worst = 0.0
+for o in evaluate(m):
+    if not math.isnan(o.chance):
+        p = chance(m, o, Zr)
+        worst = max(worst, abs(o.chance - p) / (3 * math.sqrt(max(p * (1 - p), 1e-4) / MC_RUNS)))
+        print(f"       {o.name:30s} {MC_RUNS} runs {o.chance:.4f}, 400 000 runs (numpy PCG64) {p:.4f}")
+check("  largest difference, in units of 3 sigma of the 4000 runs", worst, 0.0, 1.0)
+# The trim on a real 3D plan: turn each Hohmann burn off course, trim it straight after, and fly it
+o = evaluate(Mission())[0]
+flown, trims = [], 0.0
+for (t, dv), ang in zip(o.vec_plan, (3.0, 2.0)):
+    axis = np.cross(dv, [0.0, 0.0, 1.0] if abs(dv[2]) < 0.9 * np.linalg.norm(dv) else [1.0, 0.0, 0.0])
+    off = _rotate(dv, axis, math.radians(ang))
+    flown += [(t, off), (t, dv - off)]
+    trims += 2 * np.linalg.norm(dv) * math.sin(math.radians(ang) / 2)
+m = Mission()
+_, _, yf, dvsim = simulate_vec(o.y0, flown, coast_after=3600)
+dh, de = target_mismatch(yf, m.r2, m.ra2, math.radians(28.5), 0.0)
+_, _, ym, _ = simulate_vec(o.y0, flown[::2], coast_after=3600)
+miss = target_mismatch(ym, m.r2, m.ra2, math.radians(28.5), 0.0)
+ok = dh < 1e-6 and de < 1e-6 and abs(dvsim - o.dv - trims) < 1e-12 and min(miss) > 1e-3
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Hohmann burns 3 and 2 deg off course, each trimmed: on target (|dh|/h {dh:.1e}, |de| {de:.1e}), "
+      f"trims {1e3 * trims:.1f} m/s = 2 dv sin(theta/2); untrimmed it misses (|dh|/h {miss[0]:.1e}, |de| {miss[1]:.1e})")
+# The rule: Propellant-critical with a 3300 h limit picks the spiral (136.5 days); with the errors it makes the limit
+# only when the thrust is no more than 0.7 % low, so it is ruled out and a chemical transfer is recommended
+m = Mission(weights=(0.25, 0.55, 0.05, 0.15), tof_max_h=3300)
+a, b = recommend(evaluate(m)), None
+m.uncertainty = True
+opts = evaluate(m)
+b, lt = recommend(opts), next(o for o in opts if o.key == "low_thrust")
+ref = norm.sf((lt.dv / (m.accel_ep * 1e-3 * 3300 * 3600 * (1 + 1e-6)) - 1) / 0.02)
+ok = a.key == "low_thrust" and not lt.feasible and b.key != "low_thrust" and abs(lt.chance - ref) < 3 * math.sqrt(ref * (1 - ref) / MC_RUNS)
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Propellant-critical, 3300 h: {a.name} without errors; with them the spiral fits in "
+      f"{100 * lt.chance:.1f} % of runs (normal tail {100 * ref:.1f} %): {lt.reasons[-1]}; recommended: {b.name}")
+# The Pareto front (propellant against time) of LEO -> GEO: Hohmann is beaten by the split (same time, less propellant)
+front = [o.key for o in evaluate(Mission()) if o.pareto]
+ok = front == ["hohmann_split", "one_tangent", "low_thrust"]
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Pareto front of LEO -> GEO: {front}")
+# ... and on 60 random missions: no option on the front beats another, and every feasible option off it is beaten by one on it
+rng = np.random.default_rng(7)
+beats = lambda p, o: (p.prop_frac <= o.prop_frac * (1 + 1e-9) and p.tof <= o.tof * (1 + 1e-9)
+                      and (p.prop_frac < o.prop_frac * (1 - 1e-9) or p.tof < o.tof * (1 - 1e-9)))
+ok, n_front = True, 0
+for _ in range(60):
+    opts = evaluate(Mission(alt1=rng.uniform(200, 2000), alt2=rng.uniform(200, 60000), di_deg=rng.uniform(0, 60),
+                            dv_budget=rng.uniform(2, 9), tof_max_h=10 ** rng.uniform(0, 4)))
+    on = [o for o in opts if o.pareto]
+    off = [o for o in opts if o.feasible and not o.pareto]
+    ok &= all(o.feasible for o in on) and not any(beats(p, o) for p in on for o in on)
+    ok &= all(any(beats(p, o) for p in on) for o in off)
+    n_front += len(on)
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Pareto front on 60 random missions ({n_front} options on it): consistent")
 
 print("\n=== 5. Elliptical orbits and Lambert ===")
 # Curtis, Orbital Mechanics for Engineering Students, Example 5.2

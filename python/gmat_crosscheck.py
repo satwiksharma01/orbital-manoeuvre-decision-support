@@ -8,6 +8,9 @@
    EarthMJ2000Eq, so the plane and the apse line count, not only the shape.
 3. With the spacecraft model the script carries the spacecraft's mass and a chemical tank, and
    GMAT draws each burn's propellant from it: GMAT's propellant used vs the tool's.
+4. Uncertainty: GMAT flies each burn off course by the pointing error of a Monte Carlo run,
+   then the trim, and must arrive on target having used the propellant the tool's trim cost,
+   2 dv sin(theta/2) per burn, predicts.
 
 Needs a local GMAT (https://sourceforge.net/projects/gmat/). Not run in CI.
 Run: python python/gmat_crosscheck.py [path/to/GmatConsole.exe]
@@ -18,12 +21,14 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from string import Template
 
 import numpy as np
 
-from odst import G0, MU, RE, Mission, evaluate, gmat_script, hohmann, orbit_basis, perifocal, vcirc, vvis
+from odst import (G0, MU, RE, Mission, _rotate, evaluate, gmat_script, hohmann, mc_normals, orbit_basis, perifocal, vcirc,
+                  vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = Path(__file__).resolve().parent
@@ -165,6 +170,38 @@ def main():
             ref = m.mass0_kg * (1 - math.exp(-o.dv / (m.isp_chem * G0)))     # impulsive: no gravity loss, no margin
             report(abs(used - ref) < 1e-6, f"{m.mass0_kg:g} kg, {m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f} km: {o.name:36s} "
                                            f"propellant used, GMAT {used:.6f} kg vs tool {ref:.6f} kg")
+
+    print("\n=== 4. Uncertainty: off-course burns of three Monte Carlo runs (pointing 2 deg, 1 sigma), each trimmed ===")
+    Z, sig = mc_normals(), math.radians(2.0)
+    for m in SPACECRAFT:
+        P, W = target_vectors(m)
+        p, ecc = 2 * m.r2 * m.ra2 / (m.r2 + m.ra2), (m.ra2 - m.r2) / (m.ra2 + m.r2)
+        for o in evaluate(m):
+            if not o.vec_plan or not o.applicable:
+                continue
+            for run in range(3):
+                plan, trims = [], 0.0
+                for j, (t, dv) in enumerate(o.vec_plan):        # turn the burn by theta about an axis across it
+                    z1, z2 = Z[run, 2 + 2 * j], Z[run, 3 + 2 * j]
+                    e1 = np.cross(dv, [0.0, 0.0, 1.0] if abs(dv[2]) < 0.9 * np.linalg.norm(dv) else [1.0, 0.0, 0.0])
+                    e1 /= np.linalg.norm(e1)
+                    e2 = np.cross(dv / np.linalg.norm(dv), e1)
+                    flown = _rotate(dv, z1 * e1 + z2 * e2, sig * math.hypot(z1, z2))
+                    plan += [(t, flown), (t, dv - flown)]
+                    trims += 2 * np.linalg.norm(dv) * math.sin(sig * math.hypot(z1, z2) / 2)
+                g = gmat(console, lambda rep: gmat_script(m, replace(o, vec_plan=plan), rep))
+                if g is None:
+                    report(False, f"{o.name}, run {run + 1}: GMAT run failed")
+                    continue
+                r, v = np.array(g[:3]), np.array(g[3:6])
+                h = np.cross(r, v)
+                dh = np.linalg.norm(h - math.sqrt(MU * p) * W) / math.sqrt(MU * p)
+                de = np.linalg.norm(np.cross(v, h) / MU - r / np.linalg.norm(r) - ecc * P)
+                used = m.prop_chem_kg - g[11]
+                ref = m.mass0_kg * (1 - math.exp(-(o.dv + trims) / (m.isp_chem * G0)))
+                report(dh < 1e-6 and de < 1e-6 and abs(used - ref) < 1e-6,
+                       f"{m.mass0_kg:g} kg, {m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f} km: {o.name:36s} run {run + 1}: trims "
+                       f"{1e3 * trims:6.1f} m/s; |dh|/h {dh:.1e}, |de| {de:.1e}; propellant GMAT {used:.6f} vs tool {ref:.6f} kg")
     print(f"\n{'ALL CHECKS PASSED' if not fails else f'{fails} CHECK(S) FAILED'}")
     sys.exit(fails)
 

@@ -74,6 +74,13 @@ class Mission:
     power_ep_kW: float = 6.5       # electric thruster input power, kW
     eff_ep: float = 0.6            # electric thruster efficiency: jet power / input power
     prop_ep_kg: float = 100.0      # electric propellant on board, kg
+    # uncertainty: with it on, every option that meets the limits is flown MC_RUNS times with random Isp,
+    # thrust and pointing errors, and is ruled out if it fits the limits in under confidence_pct of the runs
+    uncertainty: bool = False
+    sigma_isp_pct: float = 1.0     # Isp error, 1 sigma, % (both engines)
+    sigma_thrust_pct: float = 2.0  # thrust error, 1 sigma, % (both engines)
+    sigma_point_deg: float = 0.5   # pointing error of each impulsive burn, 1 sigma about each of two axes, deg
+    confidence_pct: float = 90.0   # chance of fitting the limits an option needs, %
 
     def __post_init__(self):
         if self.elements is not None:
@@ -125,6 +132,8 @@ class Option:
     prop_kg: float = float("nan")  # propellant mass, kg, with the spacecraft model
     feasible: bool = True
     reasons: list = field(default_factory=list)
+    chance: float = float("nan")   # share of the Monte Carlo runs that fit the limits, with uncertainty on
+    pareto: bool = False           # feasible, and no feasible option needs both less propellant and less time
     score_ws: float = float("nan")
     score_topsis: float = float("nan")
 
@@ -568,12 +577,13 @@ def gravity_loss(legs, isp, tw):
     """Finite-burn gravity loss, Robbins (1966): dv * (w tau)^2 / 24 per burn, with
     w the circular rate at the burn radius and tau the burn time at constant thrust
     T = tw * m0 * g0. Matches a fixed-attitude burn within ~5 % for tw >= 0.2 and
-    overestimates a velocity-tracking burn about 2x (validate.py, section 4)."""
+    overestimates a velocity-tracking burn about 2x (validate.py, section 4).
+    isp and tw may be arrays (the Monte Carlo runs)."""
     ve, m, loss = isp * G0, 1.0, 0.0
     for r, dv in legs:
-        tau = isp / tw * m * (1.0 - math.exp(-dv / ve))
+        tau = isp / tw * m * (1.0 - np.exp(-dv / ve))
         loss += dv * (math.sqrt(MU / r ** 3) * tau) ** 2 / 24.0
-        m *= math.exp(-dv / ve)
+        m *= np.exp(-dv / ve)
     return loss
 
 
@@ -591,6 +601,7 @@ def evaluate(m: Mission):
         if m.mass0_kg is not None:
             o.prop_kg = m.mass0_kg * o.prop_frac
     apply_rules(m, opts)
+    pareto(opts)
     score(m, opts)
     return opts
 
@@ -675,6 +686,69 @@ def _circular_options(m: Mission):
 
 
 
+# ------------------------------------------------------ uncertainty (Monte Carlo)
+MC_RUNS = 4000                  # runs per option: one sigma of a 90 % chance is 0.5 %
+MC_SEED = (12345,) * 6          # MRG32k3a's usual seed; fixed, so every option, mission and engine uses the same runs
+_mc_z = None
+
+
+def mrg32k3a(n, seed=MC_SEED):
+    """n uniforms in (0, 1) from L'Ecuyer's MRG32k3a (Operations Research 47, 1999), in floating point
+    like his reference code: every product is an exact integer below 2^53, so all three engines agree."""
+    m1, m2 = 4294967087.0, 4294944443.0
+    s1, s2 = [float(x) for x in seed[:3]], [float(x) for x in seed[3:]]
+    u = np.empty(n)
+    for k in range(n):
+        p1 = (1403580.0 * s1[1] - 810728.0 * s1[0]) % m1
+        p2 = (527612.0 * s2[2] - 1370589.0 * s2[0]) % m2
+        s1, s2 = [s1[1], s1[2], p1], [s2[1], s2[2], p2]
+        u[k] = (p1 - p2 if p1 > p2 else p1 - p2 + m1) * 2.328306549295727688e-10
+    return u
+
+
+def mc_normals():
+    """MC_RUNS x 8 standard normals, Box-Muller on consecutive uniform pairs, row by row. Columns: the Isp
+    error, the thrust error, then the two pointing components of the first, second and third burn."""
+    global _mc_z
+    if _mc_z is None:
+        u = mrg32k3a(8 * MC_RUNS).reshape(-1, 2)
+        r, a = np.sqrt(-2 * np.log(u[:, 0])), 2 * math.pi * u[:, 1]
+        _mc_z = np.column_stack([r * np.cos(a), r * np.sin(a)]).reshape(MC_RUNS, 8)
+    return _mc_z
+
+
+def chance(m: Mission, o: Option, Z=None):
+    """Share of the runs in which option o fits the budget, the time limit and the propellant on board.
+    Each run draws an Isp and a thrust error and, for each impulsive burn, a pointing error, trimmed
+    straight after the burn at a cost of |dv_flown - dv_planned| = 2 dv sin(theta / 2). Burns end at their
+    planned dv (accelerometer cutoff), so the thrust error changes the gravity loss and the low-thrust time."""
+    Z = mc_normals() if Z is None else Z
+    isp = o.isp * (1 + m.sigma_isp_pct / 100 * Z[:, 0])
+    f = 1 + m.sigma_thrust_pct / 100 * Z[:, 1]
+    sc = m.mass0_kg is not None
+    if o.key == "low_thrust":
+        dv, a, ve = o.dv, m.accel_ep * 1e-3 * f, isp * G0
+        tof = ve / a * (1 - np.exp(-dv / ve)) if sc else dv / a
+    else:
+        th = math.radians(m.sigma_point_deg)
+        dv = o.dv + gravity_loss(o.legs, isp, m.tw_chem * f) + sum(
+            2 * d * np.sin(th * np.hypot(Z[:, 2 + 2 * j], Z[:, 3 + 2 * j]) / 2) for j, (_, d) in enumerate(o.legs))
+        tof = o.tof
+    need = dv * (1 + m.margin_pct / 100)
+    ok = (need <= m.dv_budget) & (tof <= m.tof_max_h * 3600.0 * (1 + 1e-6))
+    if sc:
+        ok &= m.mass0_kg * (1 - np.exp(-need / (isp * G0))) <= (m.prop_ep_kg if o.key == "low_thrust" else m.prop_chem_kg)
+    return float(np.mean(ok))
+
+
+def pareto(opts):
+    """Mark the Pareto front: feasible options that no feasible option beats on both propellant and time."""
+    feas = [o for o in opts if o.feasible]
+    for o in feas:
+        o.pareto = not any(p.prop_frac <= o.prop_frac * (1 + 1e-9) and p.tof <= o.tof * (1 + 1e-9) and
+                           (p.prop_frac < o.prop_frac * (1 - 1e-9) or p.tof < o.tof * (1 - 1e-9)) for p in feas)
+
+
 # ------------------------------------------------- rule-based decision layer
 def apply_rules(m: Mission, opts):
     tof_max = m.tof_max_h * 3600.0
@@ -703,6 +777,16 @@ def apply_rules(m: Mission, opts):
                 o.feasible = False
                 o.reasons.append(f"needs {prop:.0f} kg of propellant with the {m.margin_pct:g}% margin, "
                                  f"{onboard:.0f} kg on board")
+        if m.uncertainty and o.feasible:
+            o.chance = chance(m, o)
+            if o.chance < m.confidence_pct / 100:
+                o.feasible = False
+                o.reasons.append(f"fits the limits in {pct(o.chance)}% of runs with the errors, {m.confidence_pct:g}% required")
+
+
+def pct(p):
+    """A chance as a whole percentage, rounded down, so 89.9 % never reads as a passing 90 %."""
+    return math.floor(100 * p + 1e-9)
 
 
 def rule_advice(m: Mission):
@@ -1019,14 +1103,19 @@ def print_table(m: Mission, opts):
     dw = f", Δω = {m.dw_deg:g}°" if m.elliptical else ""
     print(f"\nMission: alt {o1} -> {o2} km, Δi = {m.di_deg:.2f}°{dw}, "
           f"budget {m.dv_budget} km/s (margin {m.margin_pct:g}%, T/W {m.tw_chem:g}), TOF max {m.tof_max_h:.1f} h, weights {m.weights}")
-    hdr = f"{'Option':34s}{'Δv km/s':>9s}{'loss m/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{'WS':>7s}{'TOPSIS':>8s}  status"
+    if m.uncertainty:
+        print(f"Uncertainty, 1 sigma: Isp {m.sigma_isp_pct:g}%, thrust {m.sigma_thrust_pct:g}%, pointing {m.sigma_point_deg:g}° "
+              f"per axis; {MC_RUNS} runs, {m.confidence_pct:g}% required")
+    fit = f"{'fit':>6s}" if m.uncertainty else ""
+    hdr = f"{'Option':34s}{'Δv km/s':>9s}{'loss m/s':>9s}{'TOF':>12s}{'burns':>6s}{'mp/m0':>8s}{'cplx':>6s}{fit}{'WS':>7s}{'TOPSIS':>8s}  status"
     print(hdr); print("-" * len(hdr))
     for o in opts:
         tof = f"{o.tof/3600:.2f} h" if o.tof < 72 * 3600 else f"{o.tof/86400:.1f} d"
-        st = "OK" if o.feasible else "X " + "; ".join(o.reasons)
+        st = ("OK, Pareto front" if o.pareto else "OK") if o.feasible else "X " + "; ".join(o.reasons)
         ws = f"{o.score_ws:.3f}" if o.feasible else "-"
         tp = f"{o.score_topsis:.3f}" if o.feasible else "-"
-        print(f"{o.name:34s}{o.dv:9.4f}{1e3 * o.dv_loss:9.1f}{tof:>12s}{o.burns:6d}{o.prop_frac:8.3f}{o.complexity:6.1f}{ws:>7s}{tp:>8s}  {st}")
+        fit = (f"{'-' if math.isnan(o.chance) else str(pct(o.chance)) + '%':>6s}") if m.uncertainty else ""
+        print(f"{o.name:34s}{o.dv:9.4f}{1e3 * o.dv_loss:9.1f}{tof:>12s}{o.burns:6d}{o.prop_frac:8.3f}{o.complexity:6.1f}{fit}{ws:>7s}{tp:>8s}  {st}")
     best = recommend(opts)
     print("Recommended:", best.name if best else "NONE FEASIBLE - relax constraints")
     for a in rule_advice(m):
