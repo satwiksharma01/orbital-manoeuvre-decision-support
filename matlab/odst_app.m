@@ -12,12 +12,13 @@ T = odst_theme();
 C = odst_const();
 [pnames, W] = odst_presets();
 ARW = char(8594); DEG = char(176); DEL = char(916);
-CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = char(183);
+CHK = char(10003); WRN = char(9888); DOT = char(9679); BUL = char(8226); MID = char(183); SIG = char(963);
 
 defaults = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'di_deg', 28.5, 'dv_budget', 6.5, 'margin_pct', 5, 'tof_max_h', 4800, ...
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced', 'elements', [], 'mass0_kg', NaN, ...
-                  'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 100);
+                  'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 100, ...
+                  'uncert', 'off', 'sigma_isp_pct', 1, 'sigma_thrust_pct', 2, 'sigma_point_deg', 0.5, 'confidence_pct', 90);
 defEl = [28.5 0 0 0 0 0];       % element inputs before any are entered: LEO at 28.5 deg -> GEO
 examples = {
     ['LEO ' ARW ' GEO'],         struct()
@@ -33,15 +34,17 @@ examples = {
                                        'propulsion', 'chemical')
     'Kourou GTO',               struct('alt1', 250, 'apo1', 35786, 'elements', [6 0 178 0 0 0], ...
                                        'propulsion', 'chemical')
-    'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350)};
+    'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350)
+    'Monte Carlo',              struct('uncert', 'on', 'tof_max_h', 3300, 'preset', 'Propellant-critical')};
 
 % ---- state shared by the nested callbacks
-prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; selected = ''; manual = false; order = {};
+prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; uncert = 'off';
+selected = ''; manual = false; order = {};
 lastM = []; lastOpts = []; lastRec = []; lastAdv = {};
 h = struct();
 
 % ================================================================ window
-fig = uifigure('Name', 'Orbital Manoeuvre Planner', 'Position', [40 40 1460 900]);
+fig = uifigure('Name', 'Orbital Manoeuvre Planner', 'Position', [40 40 1560 900]);
 if isprop(fig, 'Theme'), fig.Theme = 'light'; end
 fig.Color = T.bg;
 root = uigridlayout(fig, [2 1], 'RowHeight', {58, '1x'}, 'Padding', [0 0 0 0], ...
@@ -114,7 +117,7 @@ for k = 1:4
 end
 
 groupTitle(left, 'Engine and limits');
-h.engGrid = listPanel(left, 13);
+h.engGrid = listPanel(left, 18);
 h.vehSeg = segRow(h.engGrid, 'Vehicle', {'Generic', 'Spacecraft'}, {'generic', 'spacecraft'}, @pickVehicle);
 h.m0   = numRow(h.engGrid, 'Wet mass', 1000, [1 Inf], 'kg');
 h.ispc = numRow(h.engGrid, 'Chemical Isp', defaults.isp_chem, [1 Inf], 's');
@@ -128,6 +131,11 @@ h.eff  = numRow(h.engGrid, 'Electric efficiency', defaults.eff_ep, [0.01 1], '')
 h.pe   = numRow(h.engGrid, 'Electric propellant', defaults.prop_ep_kg, [0 Inf], 'kg');
 h.derived = lbl(h.engGrid, '', 12.5, T.label2);
 h.rbm  = numRow(h.engGrid, 'Max bi-elliptic apoapsis', defaults.rb_max, [1 Inf], 'km');
+h.uncSeg = segRow(h.engGrid, 'Uncertainty', {'Off', 'On'}, {'off', 'on'}, @pickUncert);
+h.sIsp = numRow(h.engGrid, ['Isp error, 1' SIG], defaults.sigma_isp_pct, [0 10], '%');
+h.sThr = numRow(h.engGrid, ['Thrust error, 1' SIG], defaults.sigma_thrust_pct, [0 10], '%');
+h.sPnt = numRow(h.engGrid, ['Pointing error, 1' SIG ' per axis'], defaults.sigma_point_deg, [0 10], 'deg');
+h.conf = numRow(h.engGrid, 'Required chance', defaults.confidence_pct, [0 100], '%');
 
 % ================================================================ results (right)
 right = uigridlayout(body, [3 1], 'RowHeight', {214, '1x', 252}, 'Padding', [0 0 0 0], ...
@@ -162,7 +170,8 @@ h.vWhy.WordWrap = 'on'; h.vWhy.VerticalAlignment = 'top';
 % ---- trade space + transfer geometry
 charts = uigridlayout(right, [1 2], 'ColumnWidth', {'1.25x', '1x'}, 'ColumnSpacing', 16, ...
                       'Padding', [0 0 0 0], 'BackgroundColor', T.bg);
-[h.axTrade, ~, ~] = chartCard(charts, 'Trade space', [DEL 'v against transfer time. Hollow markers break a constraint.']);
+[h.axTrade, ~, ~] = chartCard(charts, 'Trade space', ['Propellant against transfer time. Dashed: the Pareto front. ' ...
+                               'Hollow markers break a constraint.']);
 [h.axGeo, h.geoSub, h.geoTitle, h.export] = chartCard(charts, 'Transfer geometry', '');
 h.export.Text = 'Export to GMAT';
 h.export.Tooltip = 'Save a NASA GMAT script and a JSON file of the burns';
@@ -221,6 +230,8 @@ update(false);
         if ~isnan(d.mass0_kg), vehicle = 'spacecraft'; h.m0.Value = d.mass0_kg; end
         h.thr.Value = d.thrust_chem_N; h.pc.Value = d.prop_chem_kg; h.pwr.Value = d.power_ep_kW;
         h.eff.Value = d.eff_ep; h.pe.Value = d.prop_ep_kg;
+        uncert = d.uncert; h.sIsp.Value = d.sigma_isp_pct; h.sThr.Value = d.sigma_thrust_pct;
+        h.sPnt.Value = d.sigma_point_deg; h.conf.Value = d.confidence_pct;
         layoutEngine();
         prop = d.propulsion; setSeg(h.propSeg, prop);
         applyPreset(d.preset);
@@ -247,17 +258,25 @@ update(false);
         update(false);
     end
 
+    function pickUncert(v)
+        uncert = v;
+        layoutEngine();
+        highlightChip(0);
+        update(false);
+    end
+
     function layoutEngine()
         % Rows of Engine and limits: vehicle; mass; chemical Isp, T/W or thrust and propellant;
-        % electric Isp, F/m or power, efficiency and propellant; the derived thrust; rB limit
-        sc = strcmp(vehicle, 'spacecraft');
-        rows = [1, sc, 1, ~sc, sc, sc, 1, ~sc, sc, sc, sc, sc, 1];
+        % electric Isp, F/m or power, efficiency and propellant; the derived thrust; rB limit;
+        % uncertainty, then the three error sizes and the required chance
+        sc = strcmp(vehicle, 'spacecraft'); u = strcmp(uncert, 'on');
+        rows = [1, sc, 1, ~sc, sc, sc, 1, ~sc, sc, sc, sc, sc, 1, 1, u, u, u, u];
         h.engGrid.RowHeight = num2cell(40*rows);
         rowObj = [h.m0.Parent, h.tw.Parent, h.thr.Parent, h.pc.Parent, h.acc.Parent, h.pwr.Parent, ...
-                  h.eff.Parent, h.pe.Parent, h.derived];
-        set(rowObj, {'Visible'}, arrayfun(@onOff, logical(rows([2 4:6 8:12])), 'UniformOutput', false).');
+                  h.eff.Parent, h.pe.Parent, h.derived, h.sIsp.Parent, h.sThr.Parent, h.sPnt.Parent, h.conf.Parent];
+        set(rowObj, {'Visible'}, arrayfun(@onOff, logical(rows([2 4:6 8:12 15:18])), 'UniformOutput', false).');
         left.RowHeight{10} = 8 + 40*sum(rows);
-        setSeg(h.vehSeg, vehicle);
+        setSeg(h.vehSeg, vehicle); setSeg(h.uncSeg, uncert);
     end
 
     function pickOrient(v)
@@ -348,14 +367,17 @@ update(false);
             'dw_deg', dw, 'di_deg', h.di.Value, 'elements', el, ...
             'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
             'isp_chem', h.ispc.Value, 'tw_chem', h.tw.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
-            'rb_max', h.rbm.Value, 'weights', w);
+            'rb_max', h.rbm.Value, 'weights', w, 'uncertainty', strcmp(uncert, 'on'), 'sigma_isp_pct', h.sIsp.Value, ...
+            'sigma_thrust_pct', h.sThr.Value, 'sigma_point_deg', h.sPnt.Value, 'confidence_pct', h.conf.Value);
         if strcmp(vehicle, 'spacecraft')    % the propellant on board can't weigh more than the spacecraft
             h.pc.Value = min(h.pc.Value, h.m0.Value); h.pe.Value = min(h.pe.Value, h.m0.Value - h.pc.Value);
             m = odst_mission('alt1', m.alt1, 'alt2', m.alt2, 'apo1', m.apo1, 'apo2', m.apo2, 'dw_deg', m.dw_deg, ...
                 'di_deg', m.di_deg, 'elements', m.elements, 'dv_budget', m.dv_budget, 'margin_pct', m.margin_pct, ...
                 'tof_max_h', m.tof_max_h, 'propulsion', prop, 'isp_chem', m.isp_chem, 'isp_ep', m.isp_ep, ...
                 'rb_max', m.rb_max, 'weights', w, 'mass0_kg', h.m0.Value, 'thrust_chem_N', h.thr.Value, ...
-                'prop_chem_kg', h.pc.Value, 'power_ep_kW', h.pwr.Value, 'eff_ep', h.eff.Value, 'prop_ep_kg', h.pe.Value);
+                'prop_chem_kg', h.pc.Value, 'power_ep_kW', h.pwr.Value, 'eff_ep', h.eff.Value, 'prop_ep_kg', h.pe.Value, ...
+                'uncertainty', m.uncertainty, 'sigma_isp_pct', m.sigma_isp_pct, 'sigma_thrust_pct', m.sigma_thrust_pct, ...
+                'sigma_point_deg', m.sigma_point_deg, 'confidence_pct', m.confidence_pct);
             h.derived.Text = sprintf('    T/W %.3g, electric thrust %.3g N', m.tw_chem, odst_ep_thrust(m));
         end
         [opts, rec, adv] = odst_evaluate(m);
@@ -371,6 +393,7 @@ update(false);
 % ================================================================ renderers
     function renderVerdict()
         r = lastRec; m = lastM; opts = lastOpts;
+        if m.uncertainty, h.statLbl(3).Text = 'Chance it fits'; else, h.statLbl(3).Text = 'Burns'; end
         if isempty(r)
             h.vDot.FontColor = T.bad;
             h.vEyebrow.Text = 'No feasible manoeuvre';
@@ -405,6 +428,7 @@ update(false);
         prop = sprintf('%.1f', 100*r.prop_frac); h.statLbl(4).Text = 'Propellant (% of mass)';
         if ~isnan(r.prop_kg), prop = sprintf('%.0f', r.prop_kg); h.statLbl(4).Text = 'Propellant (kg)'; end
         vals = {sprintf('%.3f km/s', r.dv), odst_fmt_time(r.tof), burnsText(r.burns), prop, sprintf('%.2f', r.score_ws)};
+        if m.uncertainty, vals{3} = sprintf('%d%%', floor(100*r.chance + 1e-9)); end
         for k2 = 1:5, h.stat(k2).Text = vals{k2}; end
         h.vWhy.Text = [detailText(r, m) note sprintf(' %d of %d candidates meet your constraints.', ...
                        numel(f), numel(opts))];
@@ -419,7 +443,8 @@ update(false);
         sc = [opts.score_ws]; sc(isnan(sc)) = -1;
         [~, idx] = sortrows([-double([opts.feasible]).', -sc.']);
         order = {opts(idx).key};
-        D = cell(numel(idx), 9);
+        mc = lastM.uncertainty; nc = 9 + mc;
+        D = cell(numel(idx), nc);
         for r = 1:numel(idx)
             o = opts(idx(r));
             if o.feasible
@@ -432,18 +457,24 @@ update(false);
             else
                 score = '-'; tops = '-'; status = o.reasons;
             end
-            D(r, :) = {o.name, sprintf('%.3f', o.dv), odst_fmt_time(o.tof), burnsText(o.burns), ...
-                       propText(o), sprintf('%.1f', o.complexity), score, tops, status};
+            fit = {};
+            if mc
+                fit = {'-'}; if ~isnan(o.chance), fit = {sprintf('%d%%', floor(100*o.chance + 1e-9))}; end
+            end
+            D(r, :) = [{o.name, sprintf('%.3f', o.dv), odst_fmt_time(o.tof), burnsText(o.burns), ...
+                        propText(o), sprintf('%.1f', o.complexity)}, fit, {score, tops, status}];
             if isnan(o.dv), D(r, 2:5) = {'-'}; end      % an elliptical model that doesn't apply
         end
-        h.tbl.Data = D;
-        h.tbl.ColumnWidth = {250, 76, 76, 52, 80, 82, 58, 60, 'auto'};
+        names = {'Manoeuvre', [DEL 'v km/s'], 'Time', 'Burns', 'Propellant', 'Complexity', 'Score', 'TOPSIS', 'Status'};
+        widths = {250, 76, 76, 52, 80, 82, 58, 60, 'auto'};
+        if mc, names = [names(1:6), {'Chance'}, names(7:9)]; widths = [widths(1:6), {62}, widths(7:9)]; end
+        h.tbl.Data = D; h.tbl.ColumnName = names; h.tbl.ColumnWidth = widths;
         removeStyle(h.tbl);
-        addStyle(h.tbl, uistyle('HorizontalAlignment', 'right'), 'column', 2:8);
+        addStyle(h.tbl, uistyle('HorizontalAlignment', 'right'), 'column', 2:nc - 1);
         off = find(~[opts(idx).feasible]);
         if ~isempty(off)
             addStyle(h.tbl, uistyle('FontColor', T.label3), 'row', off);
-            addStyle(h.tbl, uistyle('FontColor', T.bad), 'cell', [off(:), 9*ones(numel(off), 1)]);
+            addStyle(h.tbl, uistyle('FontColor', T.bad), 'cell', [off(:), nc*ones(numel(off), 1)]);
         end
         sel = find(strcmp(order, selected));
         recRow = [];
@@ -460,9 +491,16 @@ update(false);
         ax = h.axTrade; opts = lastOpts; m = lastM;
         cla(ax); hold(ax, 'on');
         app = opts([opts.applicable]);
-        x = max([app.tof]/3600, 1/60); y = [app.dv];
+        kg = ~isnan(m.mass0_kg);
+        x = max([app.tof]/3600, 1/60);
+        if kg, y = [app.prop_kg]; else, y = 100*[app.prop_frac]; end
         xl = 10.^[floor(log10(min(x))) - 0.15, ceil(log10(max(x))) + 0.15];
-        ytop = 1.15*max([y, m.dv_budget*(m.dv_budget < 1.6*max(y))]);
+        ytop = 1.15*max([y, 1e-9]);
+        front = find([app.pareto]);                 % options no other beats on both propellant and time
+        if numel(front) > 1
+            [~, s] = sort(x(front));
+            plot(ax, x(front(s)), y(front(s)), '--', 'Color', T.label3, 'LineWidth', 1.2);
+        end
         for i = 1:numel(app)
             c = T.series.(app(i).key);
             sz = 70; if strcmp(app(i).key, selected), sz = 130; end
@@ -492,17 +530,14 @@ update(false);
             xline(ax, m.tof_max_h, '--', 'Time limit', 'Color', T.bad, 'LineWidth', 1, 'FontSize', 10, ...
                   'LabelVerticalAlignment', 'bottom', 'FontName', T.font);
         end
-        if m.dv_budget < ytop
-            yline(ax, m.dv_budget, '--', [DEL 'v budget'], 'Color', T.bad, 'LineWidth', 1, 'FontSize', 10, ...
-                  'FontName', T.font);
-        end
         ax.XScale = 'log'; xlim(ax, xl); ylim(ax, [0 ytop]);
         ticks = [1/60 1/6 1 6 24 240 2400 8766 87660];
         names = {'1 min', '10 min', '1 h', '6 h', '1 day', '10 days', '100 days', '1 yr', '10 yr'};
         in = ticks >= xl(1) & ticks <= xl(2);
         ax.XTick = ticks(in); ax.XTickLabel = names(in);
         ax.XMinorGrid = 'off'; ax.XMinorTick = 'off';
-        xlabel(ax, 'Transfer time (log scale)'); ylabel(ax, ['Total ' DEL 'v [km/s]']);
+        xlabel(ax, 'Transfer time (log scale)');
+        if kg, ylabel(ax, 'Propellant [kg]'); else, ylabel(ax, 'Propellant [% of mass]'); end
         hold(ax, 'off');
     end
 
