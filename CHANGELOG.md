@@ -6,6 +6,7 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 
 ### Added
 
+- **J2:** an optional J2 model, in Python (`Mission(j2=True)`), MATLAB (`'j2'`) and the web, behind a Two-body | J2 switch that both planners show with orbital elements; off by default. The planes' nodes and apse lines drift at J2's secular rates (JGM-2, as in GMAT). Impulsive transfers aim for where J2 will have turned the target's plane and apse line on arrival, and the ranking shows what the aim costs. The spiral flies to the target's current plane and adds low-thrust plane changes for the drift; it isn't offered when it can't keep up. A sixth transfer between circular orbits, the **nodal drift**: a Hohmann transfer to a parking orbit above 300 km, a wait while J2 brings the two nodes together, and a Hohmann transfer on with the inclination change on the node line; the parking orbit is the cheapest that meets the time limit. With J2, the GMAT script flies in a JGM-2 J2 field with the target alongside and sets off each burn, in the local VNB frame, at its apsis, node or time; the JSON gives each burn's event and VNB Δv. New example: Nodal drift.
 - **Uncertainty:** an optional Monte Carlo over Isp, thrust and pointing errors (1σ, default 1 %, 2 % and 0.5° per axis), in Python (`Mission(uncertainty=True)`), MATLAB (`'uncertainty'`) and the web, behind an Uncertainty toggle in both planners; off by default. Each option that meets the limits is flown 4,000 times, each burn trimmed straight after it at the cost of its error. Each option gets the share of runs that fit the budget, the time limit and the propellant on board, and is ruled out below the required share (default 90 %). The generator is L'Ecuyer's MRG32k3a with a fixed seed, so all three engines give the same chances. New example: Monte Carlo.
 - **Pareto front:** the options no other feasible option beats on both propellant and time are marked in all three engines and joined on the trade-space chart.
 
@@ -13,15 +14,16 @@ All notable changes to this project. The format follows [Keep a Changelog](https
 - **Orbital elements:** each orbit's inclination, RAAN and argument of periapsis can be entered instead of an inclination change, in Python (`Mission(elements=...)`), MATLAB (`'elements'`) and the web, behind an Orientation toggle in both planners; the inclination change stays the default. The models get the angle between the planes and each periapsis measured from the node line; apse-to-apse and Lambert accept a start periapsis off the node line. The GMAT script and JSON hold the orbits as entered, in EarthMJ2000Eq, and the script also reports RAAN and argument of periapsis. New example: Kourou GTO (i 6°, ω 178°) to GEO.
 - **GMAT export:** the web planner and the MATLAB app save the selected transfer as a NASA GMAT script and a JSON file of its burns; Python has `gmat_script` and `burns_json`. The script flies the burn plan from the start state with the tool's physics, including its Earth μ, and reports the orbit it arrives on.
 - **Exact burn plans for every impulsive transfer:** the circular transfers now also carry a start state and inertial Δv vectors, built with an analytic Kepler propagator.
-- **Verification:** GMAT flies the exported scripts and arrives on target to 1.1 × 10⁻⁹; the export and the orbital elements are tested in all three engines.
+- **Verification:** GMAT flies the exported scripts and arrives on target to 1.1 × 10⁻⁹; the export and the orbital elements are tested in all three engines. The J2 rates are checked against Wertz's sun-synchronous inclination and full-J2 propagation, and the J2 plans are flown with full J2 in Python and in GMAT.
 
 ### Changed
 
 - **Circular transfers' burn plans** now turn the plane toward the target plane itself and change plane on the node line, so they arrive in the right plane, not only at the right inclination. A raising one-tangent transfer starts earlier on the circular orbit for this. Δv and flight times are unchanged.
 - **Kepler propagator:** hyperbolic arcs start Newton from Vallado's guess; the elliptic one overflowed on a fast 59 km/s Lambert arc.
 - **Trade-space chart:** it plots propellant (% of mass, or kg with a spacecraft) against time instead of Δv, so the low-thrust spiral, which needs more Δv but far less propellant, can sit on the Pareto front. The Δv budget line is gone from it; the budget still rules options out.
-- **MATLAB app:** the window is 1,560 px wide (was 1,460), so the new example fits in the top bar.
-- **Test suites:** `validate.py` 119 checks, `odst_tests.m` 137, `test_engine.js` 132; the GMAT cross-check runs 51 checks, 48 of them on exported scripts.
+- **MATLAB app:** the window is 1,560 px wide (was 1,460) and the course line sits under the title, so all eleven examples fit the top bar of a 1,536 px screen. The time-limit label sits left of its line, as in the web planner, clear of an option on the limit.
+- **Monte Carlo:** each run draws ten normals, for up to four burns (the nodal drift). The first eight are drawn as before, so every other option's chance is unchanged.
+- **Test suites:** `validate.py` 136 checks, `odst_tests.m` 151, `test_engine.js` 146; the GMAT cross-check runs 57 checks, 54 of them on exported scripts.
 - **Result figures:** the case A and B bars were regenerated, so their propellant fractions include the gravity loss (finding 9). The decision map came out identical.
 - **Repository:** removed an unused screenshot and the backup copy Simulink kept when it upgraded the model; `*.slx.r20*` is now ignored.
 
