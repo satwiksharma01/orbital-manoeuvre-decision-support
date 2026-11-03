@@ -270,9 +270,9 @@ const scBase = { ...base, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6
   // the same normals as Python: first and last run
   const Z = O.mcNormals(), py = [[-0.847924823347079, 1.8460727873862615, 0.7028567229701457, -1.361475967116543, -1.6978660974898043, -0.3615845453046289, -0.7451327634504835, 0.953673039659349],
     [0.3355242415679864, 0.630794942430949, -1.095285273790694, 1.0227744211709222, 0.7098950824471811, 0.858224862332908, -0.7171417966521667, -0.10778190475429406]];
-  check(`${O.MC_RUNS} runs of 8 normals: first and last run vs Python [largest difference]`,
-        Math.max(...[0, 1].flatMap((j) => Z[j ? O.MC_RUNS - 1 : 0].map((z, i) => Math.abs(z - py[j][i])))), 0, 1e-12);
-  check("  sum of all 32000 normals vs Python", Z.flat().reduce((a, b) => a + b, 0), -224.82505288590977, 1e-9);
+  check(`${O.MC_RUNS} runs: the first 8 normals of the first and last run vs Python [largest difference]`,
+        Math.max(...[0, 1].flatMap((j) => Z[j ? O.MC_RUNS - 1 : 0].slice(0, 8).map((z, i) => Math.abs(z - py[j][i])))), 0, 1e-12);
+  check("  sum of the first 8 normals of every run (32000) vs Python", Z.flatMap((z) => z.slice(0, 8)).reduce((a, b) => a + b, 0), -224.82505288590977, 1e-9);
   // with every error zero, each run is the nominal one
   const zero = { uncertainty: true, sigma_isp_pct: 0, sigma_thrust_pct: 0, sigma_point_deg: 0, confidence_pct: 90 };
   ok = true;
@@ -305,6 +305,68 @@ const scBase = { ...base, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6
   const front = O.evaluate(base).opts.filter((o) => o.pareto).map((o) => o.key);
   ok = JSON.stringify(front) === JSON.stringify(["hohmann_split", "one_tangent", "low_thrust"]); fails += !ok;
   console.log(`[${ok ? "PASS" : "FAIL"}] Pareto front of LEO -> GEO: ${front}`);
+}
+// ---- J2: the planes' drift, the spiral, the nodal drift (as python/validate.py section 4e), against Python's values
+{
+  const PC = O.PRESETS["Propellant-critical"], sc = { ...scBase, mass0_kg: 1000, prop_ep_kg: 150 };
+  const cases = {
+    raan10: { ...base, alt1: 500, alt2: 500, elements: [51.6, 0, 0, 51.6, 10, 0], tof_max_h: 384, weights: PC },
+    raan10inc: { ...base, alt1: 500, alt2: 500, elements: [51.6, 0, 0, 53, 10, 0], tof_max_h: 384, weights: PC },
+    spiral: { ...base, alt1: 400, alt2: 1200, elements: [51.6, 0, 0, 51.6, 0, 0], tof_max_h: 1e5 },
+    spiralsc: { ...sc, alt1: 400, alt2: 1200, elements: [51.6, 0, 0, 51.6, 0, 0], tof_max_h: 1e5 },
+    slow: { ...base, alt1: 400, alt2: 1200, elements: [51.6, 0, 0, 51.6, 0, 0], tof_max_h: 1e5, accel_ep: 1e-4 },
+    meo: { ...base, alt1: 400, alt2: 20200, elements: [28.5, 0, 0, 55, 40, 0], tof_max_h: 1e5 },
+    descent: { ...base, alt1: 20200, alt2: 500, elements: [55, 0, 0, 55, 3, 0], tof_max_h: 1e5 },
+    geo: { ...base, alt1: 400, alt2: 35786, elements: [51.6, 120, 0, 0, 0, 0] },
+    kourou: { ...base, alt1: 250, apo1: 35786, alt2: 35786, elements: [6, 0, 178, 0, 0, 0], propulsion: "chemical" },
+  };
+  const ref = {"raan10": {"rec": "nodal_drift", "opts": {"hohmann": [1.0399338192964325, 0.0, true, 0.0, null, null, null], "hohmann_split": [1.0399338192964325, 0.0, false, null, null, null, null], "bielliptic": [1.0399338223227859, 5676.9780327835915, false, null, null, null, null], "low_thrust": [2.4318678440890706, 4863735.688178142, true, 0.8002103036610191, null, null, 2], "nodal_drift": [0.3042482984417413, 1382401.3823999988, true, null, 783.388963230549, 15.9322694368591, null]}}, "raan10inc": {"rec": "nodal_drift", "opts": {"hohmann": [1.066152021082588, 0.0, true, 0.0, null, null, null], "hohmann_split": [1.066152021082588, 0.0, false, null, null, null, null], "bielliptic": [1.0661520240892794, 5676.9780327835915, false, null, null, null, null], "low_thrust": [1.9929670917756679, 3985934.183551336, true, 0.32027102790091955, null, null, 2], "nodal_drift": [0.49060539494954797, 1382401.3823999998, true, null, 858.484512771689, 15.931725164999492, null]}}, "spiral": {"rec": "hohmann", "opts": {"hohmann": [0.4157515124549431, 3026.206774746056, true, 1.5377694229656846e-05, null, null, null], "hohmann_split": [0.4157361347607134, 3026.206774746056, false, null, null, null, null], "bielliptic": [0.4157361383783885, 6308.857407789015, false, null, null, null, null], "one_tangent": [2.4961364736241793, 916.4530230408586, true, 6.531710199375595e-07, null, null, null], "low_thrust": [1.7514522899225888, 3502904.579845178, true, 1.335392849131551, null, null, 3], "nodal_drift": [null, null, false, null, null, null, null]}}, "spiralsc": {"rec": "hohmann", "opts": {"hohmann": [0.4157515124549431, 3026.206774746056, true, 1.5377694229656846e-05, null, null, null], "hohmann_split": [0.4157361347607134, 3026.206774746056, false, null, null, null, null], "bielliptic": [0.4157361383783885, 6308.857407789015, false, null, null, null, null], "one_tangent": [2.4961364736241793, 916.4530230408586, true, 6.531710199375595e-07, null, null, null], "low_thrust": [1.736063744045925, 3306034.2183484803, true, 1.3200043032548872, null, null, 3], "nodal_drift": [null, null, false, null, null, null, null]}}, "slow": {"rec": "hohmann", "opts": {"hohmann": [0.4157515124549431, 3026.206774746056, true, 1.5377694229656846e-05, null, null, null], "hohmann_split": [0.4157361347607134, 3026.206774746056, false, null, null, null, null], "bielliptic": [0.4157361383783885, 6308.857407789015, false, null, null, null, null], "one_tangent": [2.4961364736241793, 916.4530230408586, true, 6.531710199375595e-07, null, null, null], "low_thrust": [null, null, false, null, null, null, null], "nodal_drift": [null, null, false, null, null, null, null]}}, "meo": {"rec": "hohmann", "opts": {"hohmann": [4.406918154306862, 10717.717121050175, true, 0.001485716537419357, null, null, null], "hohmann_split": [4.330759229284638, 10717.717121050175, true, 0.0014160622915824206, null, null, null], "bielliptic": [4.405432438024526, 32278.66198453821, false, null, null, null, null], "one_tangent": [5.820344649743336, 6055.36761364423, true, 0.00029958441251221046, null, null, null], "low_thrust": [14.719383419439804, 29438766.83887961, true, 8.254497599477219, null, null, 3], "nodal_drift": [4.006970399058953, 3937656.8604975925, true, null, 400.0, 45.45068452982109, null]}}, "descent": {"rec": "hohmann", "opts": {"hohmann": [3.376835683771683, 10765.949782789343, true, -0.0019006893363155974, null, null, null], "hohmann_split": [3.3761343495235128, 10765.949782789343, true, -0.0016026078272135535, null, null, null], "bielliptic": [3.3787363743786605, 32326.89464629656, false, null, null, null, null], "one_tangent": [6.742805504326066, 8981.535790465627, true, -0.0009324085572508523, null, null, null], "low_thrust": [null, null, false, null, null, null, null], "nodal_drift": [3.3723859323697707, 60628.84854822148, true, null, 20200.0, 0.5771168838591683, null]}}, "geo": {"rec": "hohmann", "opts": {"hohmann": [4.82464984429949, 19048.562509797113, true, 0.0, null, null, null], "hohmann_split": [4.784537299351257, 19048.562509797113, true, 0.0, null, null, null], "bielliptic": [4.501603227731081, 920556.7324006476, true, 0.0, null, null, null], "one_tangent": [5.901213052479644, 10862.249834254219, true, 0.0, null, null, null], "low_thrust": [7.805548981621778, 15611097.963243555, true, 0.0, null, null, 0], "nodal_drift": [null, null, false, null, null, null, null]}}, "kourou": {"rec": "lambert", "opts": {"apse": [null, null, false, null, null, null, null], "lambert": [1.4967607162136738, 3479.8680687829756, true, 0.0, null, null, null]}}, "raan10inc_burns": [[0.0, [0.09606579681241367, 0.0, 0.0], "time", false], [2950.1640720218165, [0.09485322144623076, 0.0, 0.0], "apoapsis", false], [1379451.218327978, [-0.0970403476500783, 0.17900980832924193, 0.0], "node", true], [1382401.3823999998, [-0.09606579681241278, 0.0, 0.0], "periapsis", false]], "descent_burns": [[0.0, [-1.3909970758888304, 0.08910037861377262, -6.938893903907228e-18], "time", false], [10765.949782789343, [-1.982987864746827, -2.7755575615628914e-17, 6.938893903907228e-18], "periapsis", false]]};
+  const close = (a, b, tol) => (a == null || Number.isNaN(a) ? b == null : b != null && Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)));
+  for (const [name, m] of Object.entries(cases)) {
+    const r = O.evaluate({ ...m, j2: true }), want = ref[name], bad = [];
+    for (const [k, [dv, tof, app, j2dv, alt, wait, corr]] of Object.entries(want.opts)) {
+      const o = r.opts.find((x) => x.key === k);
+      if (!o) { bad.push(`${k} missing`); continue; }
+      if (o.applicable !== app) bad.push(`${k} applicable ${o.applicable}`);
+      if (!app) continue;
+      if (!close(o.dv, dv, 1e-9) || !close(o.tof, tof, 1e-9)) bad.push(`${k} dv ${o.dv} tof ${o.tof}`);
+      if (j2dv != null && !close(o.j2_dv, j2dv, 1e-9)) bad.push(`${k} J2 dv ${o.j2_dv}`);
+      if (alt != null && (!close(o.params.alt_d, alt, 1e-9) || !close(o.params.wait_days, wait, 1e-9))) bad.push(`${k} parking ${o.params.alt_d} km ${o.params.wait_days} d`);
+      if (corr != null && o.params.corrections !== corr) bad.push(`${k} corrections ${o.params.corrections}`);
+    }
+    if ((r.rec ? r.rec.key : null) !== want.rec) bad.push(`recommended ${r.rec && r.rec.key}`);
+    const ok = !bad.length; fails += !ok;
+    const nd = r.opts.find((o) => o.key === "nodal_drift"), lt = r.opts.find((o) => o.key === "low_thrust");
+    console.log(`[${ok ? "PASS" : "FAIL"}] J2, ${name}: ${r.opts.length} options as Python (${r.rec ? r.rec.key : "none"} recommended` +
+                `${nd && nd.applicable ? `; nodal drift ${nd.dv.toFixed(4)} km/s, ${nd.params.wait_days.toFixed(2)} d at ${nd.params.alt_d.toFixed(0)} km` : ""}` +
+                `${lt && lt.applicable && lt.params.corrections ? `; spiral ${lt.dv.toFixed(4)} km/s, ${lt.params.corrections} corrections` : ""})${ok ? "" : " " + bad.join("; ")}`);
+  }
+  // from a polar orbit the parking orbits tie on time: the cheapest is taken (Python: parking where it starts)
+  {
+    const o = O.evaluate({ ...base, alt1: 452, alt2: 1273, elements: [90, 6, 0, 84.2, 235.2, 0], tof_max_h: 20, j2: true }).opts.find((x) => x.key === "nodal_drift");
+    const ok = o.applicable && !o.feasible && close(o.dv, 0.9626656591468357, 1e-9) && close(o.tof, 37182873.32233598, 1e-9) && close(o.params.alt_d, 452, 1e-9);
+    fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] J2, polar start, time limit out of reach: nodal drift ${o.dv.toFixed(4)} km/s parking at ${o.params.alt_d.toFixed(0)} km, as Python`);
+  }
+  // the local burns J2 plans fly in: VNB components, events, the node-signed plane change
+  for (const [name, key] of [["raan10inc", "nodal_drift"], ["descent", "hohmann"]]) {
+    const m = O.resolve({ ...cases[name], j2: true }), o = O.evaluate(m).opts.find((x) => x.key === key);
+    const got = O.localBurns(m, o).burns, want = ref[name + "_burns"];
+    const ok = got.length === want.length && got.every(([t, dv, at, sg], i) => Math.abs(t - want[i][0]) <= 1e-6 * Math.max(1, t) && at === want[i][2] &&
+               sg === want[i][3] && dv.every((x, j) => Math.abs(x - want[i][1][j]) < 1e-12)); fails += !ok;
+    console.log(`[${ok ? "PASS" : "FAIL"}] J2, ${name} ${key}: local burns as Python (${got.map((b) => b[2]).join(", ")})`);
+  }
+  // the export: a J2 field, VNB burns, the node crossing, the target alongside
+  const m = { ...cases.raan10inc, j2: true }, o = O.evaluate(m).opts.find((x) => x.key === "nodal_drift");
+  const txt = O.gmatScript(m, o), js = JSON.parse(O.burnsJson(m, o));
+  let ok = txt.includes("GravityField.Earth.Degree = 2;") && txt.split("Axes = VNB;").length === 6 && txt.includes("{Sat.EarthMJ2000Eq.Z = 0}") &&
+           txt.includes("If Sat.EarthMJ2000Eq.VZ > 0") && txt.includes("Create Spacecraft TargetSat;") &&
+           js.burns.map((b) => b.at).join() === "time,apoapsis,node,periapsis"; fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] J2 export of the nodal drift: J2 field, 5 VNB burns, the node crossing, TargetSat; JSON events ${js.burns.map((b) => b.at)}`);
+  // J2 needs absolute inclinations: with only an inclination change it changes nothing
+  const a = O.evaluate({ ...base, alt2: 1200, di_deg: 4, j2: true }).opts.map((x) => [x.key, x.dv]), b = O.evaluate({ ...base, alt2: 1200, di_deg: 4 }).opts.map((x) => [x.key, x.dv]);
+  ok = JSON.stringify(a) === JSON.stringify(b); fails += !ok;
+  console.log(`[${ok ? "PASS" : "FAIL"}] J2 on with only an inclination change: the two-body options, unchanged`);
 }
 console.log(fails ? `${fails} FAILED` : "ALL CHECKS PASSED");
 process.exit(fails ? 1 : 0);

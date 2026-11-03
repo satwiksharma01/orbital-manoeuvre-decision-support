@@ -42,6 +42,7 @@
   --s-low_thrust: #e87ba4;
   --s-apse: #1f9fb4;
   --s-lambert: #8a63d2;
+  --s-nodal_drift: #5b6f8a;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --r-lg: 20px;
@@ -57,7 +58,7 @@
     --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
     --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
     --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
-    --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3;
+    --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3; --s-nodal_drift: #8d9db6;
     color-scheme: dark;
   }
 }
@@ -70,7 +71,7 @@
   --material: rgba(22, 22, 23, 0.74); --seg-pill: #636366; --seg-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
   --thumb: #ffffff; --shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
   --earth: #1c5cab; --orbit: #636366; --grid: rgba(84, 84, 88, 0.35); --tip-bg: rgba(58, 58, 60, 0.94); --tip-ink: #f5f5f7;
-  --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3;
+  --s-hohmann: #3987e5; --s-hohmann_split: #d95926; --s-bielliptic: #199e70; --s-one_tangent: #c98500; --s-low_thrust: #d55181; --s-apse: #1b93a7; --s-lambert: #9873e3; --s-nodal_drift: #8d9db6;
   color-scheme: dark;
 }
 
@@ -337,6 +338,13 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
           <label class="row" for="dw_deg" hidden><span>Target apse angle Δω</span><span class="field"><input id="dw_deg" type="number" inputmode="decimal" min="0" max="360" step="any"><span class="unit">deg</span></span></label>
           <label class="row" for="di_deg"><span>Inclination change</span><span class="field"><input id="di_deg" type="number" inputmode="decimal" min="0" max="180" step="any"><span class="unit">deg</span></span></label>
           <div class="row" id="planesRow" hidden><span>Angle between the planes</span><span class="ro" id="planes"></span></div>
+          <div class="row shape" id="gravRow" hidden><span id="g-grav">Gravity</span>
+            <div class="seg" role="radiogroup" aria-labelledby="g-grav" data-seg="grav">
+              <span class="seg-pill" aria-hidden="true"></span>
+              <input type="radio" name="grav" id="gr-2" value="twobody"><label for="gr-2">Two-body</label>
+              <input type="radio" name="grav" id="gr-j" value="j2"><label for="gr-j">J2</label>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -452,7 +460,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
         <ul id="rules"></ul>
       </section>
 
-      <footer>Models: Hohmann and bi-elliptic transfers with combined plane change, one-tangent burn (Vallado), Edelbaum low-thrust approximation and the Tsiolkovsky propellant fraction, in two-body motion with impulsive burns between circular orbits. Each manoeuvre's free parameter (plane-change split, bi-elliptic apoapsis, one-tangent apsis factor) is optimised numerically. Ranking uses weighted-sum scoring cross-checked with TOPSIS. With uncertainty on, a Monte Carlo over Isp, thrust and pointing errors gives each manoeuvre's chance of fitting the limits. The same engine runs in MATLAB and Python, where every burn plan is verified by orbit propagation and a Simulink finite-burn model.</footer>
+      <footer>Models: Hohmann and bi-elliptic transfers with combined plane change, one-tangent burn (Vallado), Edelbaum low-thrust approximation and the Tsiolkovsky propellant fraction, in two-body motion with impulsive burns between circular orbits. Each manoeuvre's free parameter (plane-change split, bi-elliptic apoapsis, one-tangent apsis factor) is optimised numerically. Ranking uses weighted-sum scoring cross-checked with TOPSIS. With orbital elements and J2 on, every plan allows for Earth's oblateness turning each orbit's plane, and a nodal drift uses it. With uncertainty on, a Monte Carlo over Isp, thrust and pointing errors gives each manoeuvre's chance of fitting the limits. The same engine runs in MATLAB and Python, where every burn plan is verified by orbit propagation and a Simulink finite-burn model.</footer>
     </main>
   </div>
 </div>
@@ -464,7 +472,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 (function (root) {
   "use strict";
   const MU = 398600.4418, RE = 6378.137, G0 = 9.80665e-3;
-  const CPLX = { hohmann: 1.0, hohmann_split: 2.0, one_tangent: 2.5, bielliptic: 3.0, low_thrust: 4.0, apse: 1.5, lambert: 2.5 };
+  const CPLX = { hohmann: 1.0, hohmann_split: 2.0, one_tangent: 2.5, bielliptic: 3.0, low_thrust: 4.0, apse: 1.5, lambert: 2.5,
+                 nodal_drift: 3.0 };     // nodal drift: four burns and a wait of days to weeks, like bi-elliptic's coasts
   const PRESETS = {
     "Balanced": [0.30, 0.20, 0.30, 0.20],
     "Propellant-critical": [0.25, 0.55, 0.05, 0.15],
@@ -603,17 +612,18 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }
     return u;
   }
-  // MC_RUNS rows of 8 standard normals, Box-Muller on consecutive pairs: the Isp error, the thrust error, then the
-  // two pointing components of the first, second and third burn
+  // MC_RUNS rows of 10 standard normals, Box-Muller on consecutive pairs: the Isp error, the thrust error, then the two
+  // pointing components of the first, second and third burn; the fourth burn's (the nodal drift has four) come from the
+  // stream after the first 8 x MC_RUNS uniforms
   let mcZ = null;
   function mcNormals() {
     if (mcZ) return mcZ;
-    const u = mrg32k3a(8 * MC_RUNS);
+    const u = mrg32k3a(10 * MC_RUNS), bm = (i) => { const r = Math.sqrt(-2 * Math.log(u[i])), a = 2 * Math.PI * u[i + 1]; return [r * Math.cos(a), r * Math.sin(a)]; };
     mcZ = [];
     for (let k = 0; k < MC_RUNS; k++) {
       const z = [];
-      for (let i = 8 * k; i < 8 * k + 8; i += 2) { const r = Math.sqrt(-2 * Math.log(u[i])), a = 2 * Math.PI * u[i + 1]; z.push(r * Math.cos(a), r * Math.sin(a)); }
-      mcZ.push(z);
+      for (let i = 8 * k; i < 8 * k + 8; i += 2) z.push(...bm(i));
+      mcZ.push([...z, ...bm(8 * MC_RUNS + 2 * k)]);
     }
     return mcZ;
   }
@@ -639,6 +649,156 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     return fit / Z.length;
   }
   const pct = (p) => Math.floor(100 * p + 1e-9);   // rounded down, so 89.9 % never reads as a passing 90 %
+
+  // ------------------------------------------------- J2 (Earth's oblateness), as odst.py
+  // With orbital elements and m.j2, J2's secular drift turns every orbit's plane about Earth's axis at nodeRate during the
+  // transfer. Impulsive transfers are aimed at the target as the spacecraft will find it on arrival (j2Plan); the spiral
+  // flies to the target's plane as it is, then makes up what J2 turned (spiralJ2); nodalDrift uses the drift to turn the plane.
+  const J2 = 1.082626724392697e-3;            // JGM-2: -C20 sqrt(5), as GMAT's JGM2.cof
+  const NODAL_ALT_MIN = 300;                  // km: lowest parking orbit for the nodal drift; no drag model, and lower orbits decay in days
+  const nodeRate = (a, e, i) => -1.5 * Math.sqrt(MU / a ** 3) * J2 * (RE / (a * (1 - e * e))) ** 2 * Math.cos(i);
+  const apseRate = (a, e, i) => 0.75 * Math.sqrt(MU / a ** 3) * J2 * (RE / (a * (1 - e * e))) ** 2 * (5 * Math.cos(i) ** 2 - 1);
+  const j2On = (m) => !!m.j2 && !!m.elements;
+  const rad = (x) => x * Math.PI / 180;
+  function rodrigues(v, axis, ang) {          // v turned by ang about axis, as _rotate in odst.py
+    const k = mul3(1 / norm(axis), axis);
+    return add3(add3(mul3(Math.cos(ang), v), mul3(Math.sin(ang), cross(k, v))), mul3(dot(k, v) * (1 - Math.cos(ang)), k));
+  }
+  const normals = (m) => [0, 3].map((k) => perifocal(...m.elements.slice(k, k + 3).map(rad)).W);
+  // cos i along the plane turned from normal Wa toward Wb by phi: [A, B] with cos i = A cos phi + B sin phi
+  function tilt(Wa, Wb) {
+    const k = cross(Wa, Wb), nk = norm(k);
+    return [Wa[2], nk < 1e-12 ? 0 : (k[0] * Wa[1] - k[1] * Wa[0]) / nk];
+  }
+  // The spacecraft's J2 node drift (rad) along an Edelbaum spiral from radius ra and plane Wa to rb and Wb (Simpson in the
+  // velocity increment u; dt/du = 1/a, or e^(-u/ve)/a0 at constant thrust, after the u0 already flown)
+  function spiralDrift(m, ra, rb, Wa, Wb, dv, u0) {
+    const V0 = vc(ra), V1 = vc(rb), di = Math.acos(Math.max(-1, Math.min(1, dot(Wa, Wb))));
+    const b0 = Math.atan2(Math.sin(Math.PI / 2 * di), V0 / V1 - Math.cos(Math.PI / 2 * di));
+    const [A, B] = tilt(Wa, Wb), a0 = m.accel_ep * 1e-3, ve = m.isp_ep * G0, sc = m.mass0_kg != null;
+    const rate = (u) => {
+      const V = Math.sqrt(V0 * V0 - 2 * V0 * u * Math.cos(b0) + u * u);
+      const phi = 2 / Math.PI * (Math.atan2(V0 * Math.sin(b0), V0 * Math.cos(b0) - u) - b0), a = MU / V ** 2;
+      return -1.5 * Math.sqrt(MU / a ** 3) * J2 * (RE / a) ** 2 * (A * Math.cos(phi) + B * Math.sin(phi)) * (sc ? Math.exp(-(u0 + u) / ve) : 1) / a0;
+    };
+    const h = dv / 400;
+    let s = 0;
+    for (let j = 0; j <= 400; j++) s += rate(j * h) * (j === 0 || j === 400 ? 1 : j % 2 ? 4 : 2);
+    return h / 3 * s;
+  }
+  // The spiral under J2: Edelbaum's spiral to the target's plane as it is at departure, then low-thrust plane changes at the
+  // target orbit for what J2 turned the planes apart meanwhile, until under 1e-5 rad; if a correction leaves more than the
+  // one before, the spiral can't keep up with the target's plane and isn't offered
+  function spiralJ2(m, o) {
+    const [W1, W2] = normals(m), i2 = rad(m.elements[3]), r2 = RE + m.alt2;
+    const rn = nodeRate(r2, 0, i2), a0 = m.accel_ep * 1e-3, ve = m.isp_ep * G0;
+    const clock = m.mass0_kg != null ? (u) => ve / a0 * (1 - Math.exp(-u / ve)) : (u) => u / a0;
+    let ra = RE + m.alt1, Wa = W1, Wb = W2, u = 0, steps = 0, last = Infinity;
+    for (;;) {
+      const dv = lowThrust(ra, r2, Math.acos(Math.max(-1, Math.min(1, dot(Wa, Wb)))), m.accel_ep).dv;
+      const t = clock(u + dv) - clock(u);
+      const lag = rn * t - spiralDrift(m, ra, r2, Wa, Wb, dv, u);     // the target's node minus the spacecraft's, over this leg
+      u += dv; steps++;
+      const left = 2 * Math.asin(Math.min(1, Math.sin(i2) * Math.abs(Math.sin(lag / 2))));
+      if (left < 1e-5) break;
+      if (left >= last || steps === 30) return Object.assign(o, { applicable: false, note: "J2 turns the planes apart faster than the spiral can follow", dv: NaN, tof: NaN });
+      ra = r2; Wa = W2; Wb = rodrigues(W2, [0, 0, 1], lag); last = left;
+    }
+    return Object.assign(o, { dv: u, tof: clock(u), j2_dv: u - o.dv, params: { corrections: steps - 1 } });
+  }
+  // The spacecraft's J2 node drift (rad) along impulsive option o, planned for mission m: each coast at the rate of the
+  // orbit it flies, its plane turned by the plane changes so far
+  function scDrift(m, o) {
+    const [W1, W2] = normals(m), [A, B] = tilt(W1, W2);
+    let d = 0;
+    if (o.cplan) {
+      let phi = 0;
+      for (let k = 0; k + 1 < o.cplan.length; k++) {
+        const [t, v, dinc] = o.cplan[k], r = o.legs[k][0];
+        phi += dinc;
+        d += nodeRate(1 / (2 / r - v * v / MU), Math.abs(r * v * v / MU - 1), Math.acos(Math.max(-1, Math.min(1, A * Math.cos(phi) + B * Math.sin(phi))))) * (o.cplan[k + 1][0] - t);
+      }
+      return d;
+    }
+    let y = o.y0.slice(), t0 = 0, rate = 0;            // elliptical models: the vector plan, turned by m.R
+    for (const [t, dv] of o.plan) {
+      if (t > t0) { d += rate * (t - t0); y = kepler(y, t - t0); }
+      y = [...y.slice(0, 3), ...add3(y.slice(3), dv)];
+      const r = y.slice(0, 3), v = y.slice(3), h = cross(r, v);
+      const a = 1 / (2 / norm(r) - dot(v, v) / MU), e = norm(sub3(mul3(1 / MU, cross(v, h)), mul3(1 / norm(r), r)));
+      const hz = m.R[0][2] * h[0] + m.R[1][2] * h[1] + m.R[2][2] * h[2];
+      rate = nodeRate(a, e, Math.acos(Math.max(-1, Math.min(1, hz / norm(h))))); t0 = t;
+    }
+    return d;
+  }
+  // The mission with its target turned as the spacecraft will find it on arrival: node by dn, periapsis by da (rad)
+  const aimed = (m, dn, da) => resolve({ ...m, elements: [...m.elements.slice(0, 4), m.elements[4] + dn * (180 / Math.PI), m.elements[5] + da * (180 / Math.PI)] });
+  // Option o planned for J2. An impulsive transfer is aimed at the target as the spacecraft will find it on arrival: the node
+  // turned by (the target's drift) - (the spacecraft's drift), the periapsis by its own drift, iterated to a fixed point (the
+  // flight time hardly depends on the aim, so it settles; Lambert is searched again once). The spiral: see spiralJ2.
+  function j2Plan(m, o) {
+    if (!o.applicable) return o;
+    if (o.key === "low_thrust") return spiralJ2(m, o);
+    const r2 = RE + m.alt2, ra2 = m.apo2 == null ? r2 : RE + m.apo2, ell = isEll(m);
+    const a2 = (r2 + ra2) / 2, e2 = (ra2 - r2) / (ra2 + r2), i2 = rad(m.elements[3]), rn = nodeRate(a2, e2, i2), ra = apseRate(a2, e2, i2);
+    let d = rn * o.tof - scDrift(m, o), T = o.tof, p = o, me;
+    for (let it = 0; it < (ell ? 1 : 50); it++) {
+      me = aimed(m, d, ra * T);
+      p = build(me, o.key)[0];
+      if (!p.applicable) break;
+      const dNew = rn * p.tof - scDrift(me, p), Tn = p.tof, done = Math.abs(dNew - d) < 1e-10 && Math.abs(Tn - T) <= 1e-9 * Math.max(T, 1);
+      d = dNew; T = Tn;
+      if (done) break;
+    }
+    return Object.assign(p, { mEff: me, j2_dv: p.dv - o.dv });
+  }
+  // J2-assisted plane change between circular orbits: Hohmann to a parking orbit of radius rd, wait while the two planes'
+  // different J2 drift closes the gap between their nodes, then Hohmann to the target with the inclination change at its
+  // larger-radius burn (on the shared node line). rd is the cheapest parking orbit that meets the time limit, found on a
+  // grid and refined by bisection to the limit; with none, the fastest. As nodal_drift in odst.py.
+  function nodalDrift(m) {
+    const e = m.elements, i1 = rad(e[0]), i2 = rad(e[3]), gap0 = rad(e[4] - e[1]), TAU = 2 * Math.PI;
+    const r1 = RE + m.alt1, r2 = RE + m.alt2, di = Math.abs(i2 - i1), tofmax = m.tof_max_h * 3600;
+    const o = { key: "nodal_drift", name: "Nodal drift (J2)", dv: NaN, tof: NaN, burns: 0, isp: m.isp_chem, complexity: CPLX.nodal_drift,
+                applicable: true, note: "", params: {} };
+    if (Math.min(Math.sin(i1), Math.sin(i2)) < 1e-6) return Object.assign(o, { applicable: false, note: "an equatorial orbit has no node to move" });
+    if (Math.abs(Math.sin(gap0 / 2)) < 1e-9) return Object.assign(o, { applicable: false, note: "the nodes already coincide, so Hohmann does the plane change" });
+    const rn = nodeRate(r2, 0, i2), leg = (a, b, i) => nodeRate((a + b) / 2, Math.abs(b - a) / (a + b), i);
+    const plan = (rd) => {         // dv, tof, and the two Hohmanns, the wait, the drift rate vs the target, the node gap closed
+      const h1 = hohmann(r1, rd, 0), h2 = hohmann(rd, r2, di);
+      const gap = gap0 + rn * (h1.tof + h2.tof) - leg(r1, rd, i1) * h1.tof - leg(rd, r2, r2 >= rd ? i1 : i2) * h2.tof;
+      const rho = nodeRate(rd, 0, i1) - rn;
+      let g = gap % TAU;
+      if (g < 0) g += TAU;
+      g = Math.min(g, TAU - g) < 1e-12 ? 0 : rho > 0 ? g : g - TAU;
+      const tw = g === 0 ? 0 : Math.abs(rho) > 1e-18 ? g / rho : Infinity;
+      return { dv: h1.dv + h2.dv, tof: h1.tof + tw + h2.tof, h1, h2, tw, rho, g };
+    };
+    const rlo = RE + NODAL_ALT_MIN, rhi = 4 * Math.max(r1, r2, rlo);
+    const grid = [...new Set([...Array.from({ length: 400 }, (_, k) => rlo * (rhi / rlo) ** (k / 399)), ...[r1, r2].filter((r) => r >= rlo)])].sort((a, b) => a - b);
+    const res = grid.map(plan), fits = (p) => p.tof <= tofmax * (1 + 1e-6);
+    const ok = res.map((p, j) => (fits(p) ? j : -1)).filter((j) => j >= 0);
+    let rd;
+    if (!ok.length) {                            // the fastest; of those that tie (a polar orbit's node stays still), the cheapest
+      const tmin = Math.min(...res.map((p) => p.tof));
+      if (!isFinite(tmin)) return Object.assign(o, { applicable: false, note: "the planes drift at the same rate" });
+      rd = grid[res.reduce((b, p, q) => (p.tof <= tmin * (1 + 1e-9) && (b < 0 || p.dv < res[b].dv) ? q : b), -1)];
+    } else {
+      const j = ok.reduce((b, q) => (res[q].dv < res[b].dv ? q : b), ok[0]);
+      rd = grid[j];
+      for (const q of [j - 1, j + 1]) {           // a cheaper neighbour past the time limit: bisect to the limit
+        if (q >= 0 && q < grid.length && !ok.includes(q) && res[q].dv < res[j].dv) {
+          let a = grid[j], b = grid[q];
+          for (let it = 0; it < 60; it++) { const c = (a + b) / 2; if (fits(plan(c))) a = c; else b = c; }
+          if (plan(a).dv < plan(rd).dv) rd = a;
+        }
+      }
+    }
+    const p = plan(rd), zip = (h, dt) => h.cplan.map(([t, v, dinc], k) => [dt + t, v, dinc, h.legs[k][0], h.legs[k][1]]);
+    const bplan = [...zip(p.h1, 0), ...zip(p.h2, p.h1.tof + p.tw)].filter((b) => b[4] > DV_ZERO);
+    return Object.assign(o, { dv: p.dv, tof: p.tof, burns: bplan.length, bplan, legs: bplan.map((b) => [b[3], b[4]]),
+      params: { alt_d: rd - RE, wait_days: p.tw / 86400, rate_deg_day: p.rho * (180 / Math.PI) * 86400, gap_deg: p.g * (180 / Math.PI), di_deg: di * (180 / Math.PI) } });
+  }
   // The Pareto front: feasible options that no feasible option beats on both propellant and time
   function pareto(opts) {
     const feas = opts.filter((o) => o.feasible);
@@ -920,21 +1080,31 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
              dw_deg: ang(p2.P, y2, circ(m.alt2, m.apo2)), R: [x, y, p1.W] };
   }
 
-  function evaluate(m) {
-    m = resolve(m);
+  const isEll = (m) => (m.apo1 == null ? 0 : m.apo1 - m.alt1) > ELL_TOL || (m.apo2 == null ? 0 : m.apo2 - m.alt2) > ELL_TOL;
+  // The options for resolved mission m, before the rules; only: one model's key
+  function build(m, only) {
     const r1 = RE + m.alt1, r2 = RE + m.alt2, di = m.di_deg * Math.PI / 180, tofmax = m.tof_max_h * 3600;
     const ra1 = m.apo1 == null ? r1 : RE + m.apo1, ra2 = m.apo2 == null ? r2 : RE + m.apo2;   // null = circular
-    const ell = ra1 - r1 > ELL_TOL || ra2 - r2 > ELL_TOL;
-    if (ell && (ra1 < r1 || ra2 < r2)) throw new Error("apoapsis altitude below periapsis altitude");
     const opts = [];
     const add = (key, name, res, isp, extra) => {
       const o = Object.assign({ key, name, isp, complexity: CPLX[key], applicable: true, note: "", params: {} }, res, extra || {});
       opts.push(o); return o;
     };
-    if (ell) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax); else circularOptions(m, add, r1, r2, di, tofmax);
+    if (isEll(m)) ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax, only); else circularOptions(m, add, r1, r2, di, tofmax, only);
+    return opts;
+  }
+
+  function evaluate(m) {
+    m = resolve(m);
+    const r1 = RE + m.alt1, r2 = RE + m.alt2, di = m.di_deg * Math.PI / 180;
+    const ra1 = m.apo1 == null ? r1 : RE + m.apo1, ra2 = m.apo2 == null ? r2 : RE + m.apo2;   // null = circular
+    const ell = isEll(m);
+    if (ell && (ra1 < r1 || ra2 < r2)) throw new Error("apoapsis altitude below periapsis altitude");
+    let opts = build(m);
+    if (j2On(m)) opts = [...opts.map((o) => j2Plan(m, o)), ...(ell ? [] : [nodalDrift(m)])];
 
     for (const o of opts) {
-      if (o.cplan) Object.assign(o, circularVecPlan(r1, o.cplan, di));   // y0 + plan, as the elliptical models
+      if (o.cplan) Object.assign(o, circularVecPlan(r1, o.cplan, (o.mEff ?? m).di_deg * Math.PI / 180));   // y0 + plan, as the elliptical models
       o.dv_loss = o.legs ? gravityLoss(o.legs, o.isp, m.tw_chem ?? 0.5) : 0;
       o.prop_frac = 1 - Math.exp(-(o.dv + o.dv_loss) / (o.isp * G0));   // the propellant also pays for the loss
       o.prop_kg = m.mass0_kg != null ? m.mass0_kg * o.prop_frac : NaN;
@@ -942,7 +1112,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       if (!o.applicable) { o.reasons.push(o.note); continue; }
       const mg = m.margin_pct ?? 5, need = (o.dv + o.dv_loss) * (1 + mg / 100);
       if (need > m.dv_budget) { o.feasible = false; o.reasons.push(`Δv ${o.dv.toFixed(3)} + loss ${o.dv_loss.toFixed(3)} + ${mg}% margin = ${need.toFixed(3)} > budget ${(+m.dv_budget).toFixed(3)} km/s`); }
-      if (o.tof > tofmax * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
+      if (o.tof > m.tof_max_h * 3600 * (1 + 1e-6)) { o.feasible = false; o.reasons.push(`TOF ${(o.tof / 3600).toFixed(1)} h > limit ${(+m.tof_max_h).toFixed(1)} h`); }
       if (o.key === "low_thrust" && m.propulsion === "chemical") { o.feasible = false; o.reasons.push("no electric propulsion on board"); }
       if (o.key !== "low_thrust" && m.propulsion === "electric") { o.feasible = false; o.reasons.push("no high-thrust (chemical) propulsion on board"); }
       if (m.mass0_kg != null) {          // the propellant on board must cover the same dv as the budget
@@ -963,16 +1133,21 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
   // Hohmann, bi-elliptic, one-tangent and Edelbaum assume circular orbits, so an elliptical
   // mission is sized with the apse-to-apse and Lambert models only (as odst.py).
-  let ellMemo = { key: "" };   // the Lambert search takes ~70 ms; weight and budget changes reuse it
-  function ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax) {
+  const ellMemo = new Map();   // the Lambert search takes ~70 ms; weight and budget changes, and J2's second pass, reuse it
+  const memo = (key, f) => { if (!ellMemo.has(key)) { if (ellMemo.size > 8) ellMemo.clear(); ellMemo.set(key, f()); } return ellMemo.get(key); };
+  function ellipticalOptions(m, add, r1, ra1, r2, ra2, di, tofmax, only) {
     const dw = m.dw_deg * Math.PI / 180, w1 = m.w1_deg * Math.PI / 180, key = [r1, ra1, r2, ra2, di, dw, w1, tofmax].join();
-    if (ellMemo.key !== key) ellMemo = { key, ap: apseTransfer(r1, ra1, r2, ra2, di, dw, w1), lam: lambertOptimal(r1, ra1, r2, ra2, di, dw, tofmax, 16, w1) };
-    const { ap, lam } = ellMemo;
-    if (ap.why) add("apse", "Apse-to-apse (optimal Δi split)", { dv: NaN, tof: NaN, burns: 0 }, m.isp_chem, { applicable: false, note: ap.why });
-    else add("apse", "Apse-to-apse (optimal Δi split)", ap, m.isp_chem);
-    if (!lam) add("lambert", "Lambert (minimum Δv)", { dv: NaN, tof: NaN, burns: 2 }, m.isp_chem,
-                  { applicable: false, note: "no single-revolution Lambert transfer within the time limit" });
-    else add("lambert", "Lambert (minimum Δv)", lam, m.isp_chem, { note: lam.params.time_limited ? "time limit sets the transfer time" : "" });
+    if (!only || only === "apse") {
+      const ap = memo("apse " + key, () => apseTransfer(r1, ra1, r2, ra2, di, dw, w1));
+      if (ap.why) add("apse", "Apse-to-apse (optimal Δi split)", { dv: NaN, tof: NaN, burns: 0 }, m.isp_chem, { applicable: false, note: ap.why });
+      else add("apse", "Apse-to-apse (optimal Δi split)", ap, m.isp_chem);
+    }
+    if (!only || only === "lambert") {
+      const lam = memo("lambert " + key, () => lambertOptimal(r1, ra1, r2, ra2, di, dw, tofmax, 16, w1));
+      if (!lam) add("lambert", "Lambert (minimum Δv)", { dv: NaN, tof: NaN, burns: 2 }, m.isp_chem,
+                    { applicable: false, note: "no single-revolution Lambert transfer within the time limit" });
+      else add("lambert", "Lambert (minimum Δv)", lam, m.isp_chem, { note: lam.params.time_limited ? "time limit sets the transfer time" : "" });
+    }
   }
   function ellipticalAdvice(apse) {
     return ["Elliptical orbits: Hohmann, bi-elliptic, one-tangent and Edelbaum low thrust assume circular orbits, so the apse-to-apse and Lambert transfers are sized instead.",
@@ -980,22 +1155,26 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
                             : `No apse-to-apse transfer: ${apse.note}. Only a Lambert transfer is offered.`];
   }
 
-  function circularOptions(m, add, r1, r2, di, tofmax) {
-    const same = Math.abs(r2 - r1) < 1e-6;
-    add("hohmann", same ? "Simple plane change" : "Hohmann (combined plane change)", hohmann(r1, r2, di), m.isp_chem);
+  function circularOptions(m, add, r1, r2, di, tofmax, only) {
+    const same = Math.abs(r2 - r1) < 1e-6, want = (k) => !only || only === k;
+    if (want("hohmann")) add("hohmann", same ? "Simple plane change" : "Hohmann (combined plane change)", hohmann(r1, r2, di), m.isp_chem);
 
-    const s = hohmannSplitOpt(r1, r2, di);
-    const hs = add("hohmann_split", "Hohmann (optimal plane-change split)", hohmann(r1, r2, di, s), m.isp_chem,
-                   { params: { split_at_r1: s } });
-    if (di <= 0 || same) { hs.applicable = false; hs.note = "identical to Hohmann (no plane change to split)"; }
+    if (want("hohmann_split")) {
+      const s = hohmannSplitOpt(r1, r2, di);
+      const hs = add("hohmann_split", "Hohmann (optimal plane-change split)", hohmann(r1, r2, di, s), m.isp_chem,
+                     { params: { split_at_r1: s } });
+      if (di <= 0 || same) { hs.applicable = false; hs.note = "identical to Hohmann (no plane change to split)"; }
+    }
 
-    let rb = bieOpt(r1, r2, di, Math.max(m.rb_max, 1.01 * Math.max(r1, r2)), tofmax);
-    const tofOk = rb != null;
-    if (!tofOk) rb = 2 * Math.max(r1, r2);
-    const be = add("bielliptic", "Bi-elliptic", bielliptic(r1, r2, rb, di), m.isp_chem, { params: { rb, rb_over_r1: rb / r1 } });
-    if (tofOk && rb < 1.001 * Math.max(r1, r2)) { be.applicable = false; be.note = "optimum degenerates to Hohmann (rB → r2)"; }
+    if (want("bielliptic")) {
+      let rb = bieOpt(r1, r2, di, Math.max(m.rb_max, 1.01 * Math.max(r1, r2)), tofmax);
+      const tofOk = rb != null;
+      if (!tofOk) rb = 2 * Math.max(r1, r2);
+      const be = add("bielliptic", "Bi-elliptic", bielliptic(r1, r2, rb, di), m.isp_chem, { params: { rb, rb_over_r1: rb / r1 } });
+      if (tofOk && rb < 1.001 * Math.max(r1, r2)) { be.applicable = false; be.note = "optimum degenerates to Hohmann (rB → r2)"; }
+    }
 
-    if (!same) {
+    if (!same && want("one_tangent")) {
       const tofH = hohmann(r1, r2, di).tof;
       let k, note;
       if (tofmax < tofH) {
@@ -1007,6 +1186,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       add("one_tangent", "One-tangent burn (fast)", ot, m.isp_chem, { note, params: { k, e: ot.e, fpa_deg: ot.phi * 180 / Math.PI } });
     }
 
+    if (!want("low_thrust")) return;
     const lt = add("low_thrust", "Low-thrust spiral (Edelbaum)", lowThrust(r1, r2, di, m.accel_ep, m.mass0_kg != null ? m.isp_ep : undefined), m.isp_ep);
     // Edelbaum's yaw angle sweeps pi/2 * di, which must not exceed pi: valid up to 2 rad (114.6 deg)
     if (di > 2) { lt.applicable = false; lt.note = "Edelbaum's closed form holds only up to Δi = 114.6°"; }
@@ -1052,70 +1232,137 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const num = (x) => String(x + 0);                          // shortest text that reads back exactly; + 0 turns -0 into 0
   const gfmt = (x, p = 6) => String(Number((+x).toPrecision(p)));   // like printf %g (%.4g with p = 4)
   const alts = (m) => [m.alt1, m.apo1 ?? m.alt1, m.alt2, m.apo2 ?? m.alt2];
-  // Option o's start state and burns in EarthMJ2000Eq: the relative frame turned by R, as inertial_plan in odst.py.
+  // Option o's start state and burns in EarthMJ2000Eq: the relative frame turned by R (with J2, the frame of the mission it
+  // was planned for), as inertial_plan in odst.py.
   function inertialPlan(m, o) {
-    const R = resolve(m).R, turn = (v) => (R ? add3(add3(mul3(v[0], R[0]), mul3(v[1], R[1])), mul3(v[2], R[2])) : v);
+    const R = resolve(o.mEff ?? m).R, turn = (v) => (R ? add3(add3(mul3(v[0], R[0]), mul3(v[1], R[1])), mul3(v[2], R[2])) : v);
     return { y0: [...turn(o.y0.slice(0, 3)), ...turn(o.y0.slice(3))], plan: o.plan.map(([t, dv]) => [t, turn(dv)]) };
+  }
+  // With J2: option o's start state (EarthMJ2000Eq) and its burns in each burn's local VNB frame (velocity, orbit normal,
+  // binormal), so they follow the plane J2 turns, as [t, dv_vnb, at, signed]: at 'time' (after the planned time), 'apoapsis' or
+  // 'periapsis' (the burn ends a coast there), or 'node' (after the planned wait, at the next equator crossing); signed: the
+  // normal component is for an ascending node and flips at a descending one. As local_burns in odst.py.
+  function localBurns(m, o) {
+    if (o.key !== "nodal_drift") {
+      const { y0, plan } = inertialPlan(m, o), out = [];
+      let y = y0.slice(), t0 = 0;
+      for (const [t, dv] of plan) {
+        if (t > t0) y = kepler(y, t - t0);
+        const r = y.slice(0, 3), v = y.slice(3);
+        let at = "time";
+        if (t > 0 && Math.abs(dot(r, v)) < 1e-6 * norm(r) * norm(v)) at = norm(r) > 1 / (2 / norm(r) - dot(v, v) / MU) ? "apoapsis" : "periapsis";
+        const n = mul3(1 / norm(cross(r, v)), cross(r, v)), V = mul3(1 / norm(v), v);
+        out.push([t, [dot(V, dv), dot(n, dv), dot(cross(V, n), dv)], at, false]);
+        y = [...r, ...add3(v, dv)]; t0 = t;
+      }
+      return { y0, burns: out };
+    }
+    const { P, Q } = perifocal(rad(m.elements[0]), rad(m.elements[1]), 0), r1 = RE + m.alt1;
+    const y0 = [...mul3(r1, P), ...mul3(vc(r1), Q)], s = m.elements[3] >= m.elements[0] ? 1 : -1, out = [];   // on the start orbit's ascending node
+    let rp = r1, vp = vc(r1);
+    for (const [t, va, dinc, r] of o.bplan) {
+      const vb = Math.sqrt(MU * (2 / r - (2 / rp - vp * vp / MU)));   // the speed before the burn, on the orbit flown since the last
+      const at = t === 0 ? "time" : Math.abs(r - rp) < 1e-6 ? (o.params.di_deg > 0 ? "node" : "time") : r > rp ? "apoapsis" : "periapsis";
+      out.push([t, [va * Math.cos(dinc) - vb, s * va * Math.sin(dinc), 0], at, dinc > 0]);
+      rp = r; vp = va;
+    }
+    return { y0, burns: out };
   }
   function gmatScript(m, o, report = "odst_arrival.txt") {
     m = resolve(m);
-    const [p1, a1, p2, a2] = alts(m), K = ["X", "Y", "Z", "VX", "VY", "VZ"], { y0, plan } = inertialPlan(m, o), e = m.elements;
+    const j2 = j2On(m), K = ["X", "Y", "Z", "VX", "VY", "VZ"], e = m.elements, [p1, a1, p2, a2] = alts(m);
+    let y0, burns;
+    if (j2) ({ y0, burns } = localBurns(m, o));
+    else { const ip = inertialPlan(m, o); y0 = ip.y0; burns = ip.plan.map(([t, dv]) => [t, dv, "time", false]); }
     const sc = m.mass0_kg != null;                  // GMAT draws each burn's propellant from the tank: Sat.Fuel.FuelMass is reported
     const orbits = m.R
       ? [`% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude, i ${gfmt(e[0])} deg, RAAN ${gfmt(e[1])} deg, argp ${gfmt(e[2])} deg`,
          `% Target orbit ${gfmt(p2)} x ${gfmt(a2)} km altitude, i ${gfmt(e[3])} deg, RAAN ${gfmt(e[4])} deg, argp ${gfmt(e[5])} deg; planes ${gfmt(m.di_deg, 4)} deg apart`]
       : [`% Start orbit ${gfmt(p1)} x ${gfmt(a1)} km altitude; target ${gfmt(p2)} x ${gfmt(a2)} km, di ${gfmt(m.di_deg)} deg, dw ${gfmt(m.dw_deg)} deg`];
+    const physics = j2
+      ? ["% Physics as in the tool's J2 plan: Earth's J2 (JGM-2, degree 2, order 0) with the tool's mu. Each burn",
+         "%   is in its local VNB frame (velocity, orbit normal, binormal), so it follows the plane J2 turns, and fires",
+         "%   at its apsis, time or equator crossing. TargetSat flies the target orbit alongside: compare their planes.",
+         "%   J2's effects within an orbit, which the tool leaves out, leave a small mismatch for a trim burn."]
+      : ["% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
+         "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies."];
+    const wait = o.key === "nodal_drift" ? `, including ${o.params.wait_days.toFixed(2)} days at ${o.params.alt_d.toFixed(1)} km` : "";
+    const r2 = RE + p2, ra2 = RE + a2, fm = j2 ? "EarthJ2" : "TwoBody", sats = j2 ? "Sat, TargetSat" : "Sat";
     const s = ["% Orbital Manoeuvre Decision Support Tool: GMAT export",
-      `% Transfer: ${o.name.replace(/Δ/g, "d")}, ${plan.length} burn(s), total dv ${o.dv.toFixed(4)} km/s (impulsive), flight time ${(o.tof / 3600).toFixed(2)} h`,
+      `% Transfer: ${o.name.replace(/Δ/g, "d")}, ${burns.length} burn(s), total dv ${o.dv.toFixed(4)} km/s (impulsive), flight time ${(o.tof / 3600).toFixed(2)} h${wait}`,
       ...orbits,
       `% Frame: ${frameText(m)}.`,
-      "%   The epoch is arbitrary: the tool has no timing model yet, so Sat starts at the departure point.",
-      "% Physics as in the tool: point-mass Earth with the tool's mu and impulsive burns, so the",
-      "%   Arrival report matches the target orbit to rounding. Edit TwoBody to add J2, drag or third bodies.",
+      "%   The epoch is arbitrary: the tool has no timing model yet, so Sat starts at the departure point.", ...physics,
       "", "% GMAT's default is 398600.4415, enough to shift a 10-day transfer's arrival by 0.2 km", `Earth.Mu = ${num(MU)};`,
       "", "Create Spacecraft Sat;", "Sat.DateFormat = UTCGregorian;", `Sat.Epoch = '${EPOCH}';`,
       "Sat.CoordinateSystem = EarthMJ2000Eq;", "Sat.DisplayStateType = Cartesian;",
       ...K.map((k, j) => `Sat.${k} = ${num(y0[j])};`),
+      ...(j2 ? ["", "Create Spacecraft TargetSat;", "TargetSat.DateFormat = UTCGregorian;", `TargetSat.Epoch = '${EPOCH}';`,
+                "TargetSat.CoordinateSystem = EarthMJ2000Eq;", "TargetSat.DisplayStateType = Keplerian;",
+                `TargetSat.SMA = ${num((r2 + ra2) / 2)};`, `TargetSat.ECC = ${num((ra2 - r2) / (ra2 + r2))};`, `TargetSat.INC = ${num(e[3])};`,
+                `TargetSat.RAAN = ${num(e[4] % 360)};`, `TargetSat.AOP = ${num(e[5] % 360)};`, "TargetSat.TA = 0;"] : []),
       ...(sc ? ["", "% The spacecraft: the electric propellant is counted in the dry mass, as only chemical burns fly here",
                 "Create ChemicalTank Fuel;", `Fuel.FuelMass = ${num(m.prop_chem_kg)};`, "Fuel.AllowNegativeFuelMass = true;",
                 "Fuel.FuelDensity = 1000;", `Fuel.Volume = ${num(m.prop_chem_kg / 1000)};`,
                 `Sat.DryMass = ${num(m.mass0_kg - m.prop_chem_kg)};`, "Sat.Tanks = {Fuel};"] : []),
-      "", "Create ForceModel TwoBody;", "TwoBody.CentralBody = Earth;", "TwoBody.PointMasses = {Earth};",
-      "Create Propagator Prop;", "Prop.FM = TwoBody;", "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
+      "", `Create ForceModel ${fm};`, `${fm}.CentralBody = Earth;`,
+      ...(j2 ? [`${fm}.PrimaryBodies = {Earth};`, `${fm}.GravityField.Earth.Degree = 2;`, `${fm}.GravityField.Earth.Order = 0;`,
+                `${fm}.GravityField.Earth.PotentialFile = 'JGM2.cof';`] : [`${fm}.PointMasses = {Earth};`]),
+      "Create Propagator Prop;", `Prop.FM = ${fm};`, "Prop.Type = RungeKutta89;", "Prop.InitialStepSize = 60;",
       "Prop.Accuracy = 1e-13;", "Prop.MinStep = 0;", "Prop.MaxStep = 600;"];
-    plan.forEach(([, dv], i) => s.push("", `Create ImpulsiveBurn Burn${i + 1};`, `Burn${i + 1}.CoordinateSystem = EarthMJ2000Eq;`,
-                                      ...dv.map((x, j) => `Burn${i + 1}.Element${j + 1} = ${num(x)};`),
-                                      ...(sc ? [`Burn${i + 1}.DecrementMass = true;`, `Burn${i + 1}.Tank = {Fuel};`, `Burn${i + 1}.Isp = ${num(m.isp_chem)};`,
-                                                `Burn${i + 1}.GravitationalAccel = ${num(G0 * 1e3)};`] : [])));
+    burns.forEach(([, dv, , signed], i) => {
+      for (const [name, d] of [[`Burn${i + 1}`, dv], ...(signed ? [[`Burn${i + 1}D`, [dv[0], -dv[1], dv[2]]]] : [])]) {
+        s.push("", `Create ImpulsiveBurn ${name};`,
+               ...(j2 ? [`${name}.CoordinateSystem = Local;`, `${name}.Origin = Earth;`, `${name}.Axes = VNB;`] : [`${name}.CoordinateSystem = EarthMJ2000Eq;`]),
+               ...d.map((x, j) => `${name}.Element${j + 1} = ${num(x)};`),
+               ...(sc ? [`${name}.DecrementMass = true;`, `${name}.Tank = {Fuel};`, `${name}.Isp = ${num(m.isp_chem)};`,
+                         `${name}.GravitationalAccel = ${num(G0 * 1e3)};`] : []));
+      }
+    });
     s.push("", "Create ReportFile Arrival;", `Arrival.Filename = '${report}';`, "Arrival.Precision = 16;", "Arrival.WriteHeaders = true;",
-           "", "Create OrbitView View;", "View.Add = {Sat, Earth};", "", "BeginMissionSequence;");
+           "", "Create OrbitView View;", `View.Add = {${sats}, Earth};`, "", "BeginMissionSequence;");
     let t = 0;
-    plan.forEach(([tb], i) => {
-      if (tb > t) s.push(`Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(tb - t)}};`);
-      s.push(`Maneuver Burn${i + 1}(Sat);`);
+    burns.forEach(([tb, , at, signed], i) => {
+      if (at === "apoapsis" || at === "periapsis") s.push(`Propagate Prop(${sats}) {Sat.Earth.${at[0].toUpperCase() + at.slice(1)}};`);
+      else if (tb > t) s.push(`Propagate Prop(${sats}) {Sat.ElapsedSecs = ${num(tb - t)}};`);
+      if (at === "node") s.push(`Propagate Prop(${sats}) {Sat.EarthMJ2000Eq.Z = 0};`);
+      s.push(...(signed ? ["If Sat.EarthMJ2000Eq.VZ > 0", `   Maneuver Burn${i + 1}(Sat);`, "Else", `   Maneuver Burn${i + 1}D(Sat);`, "EndIf;"]
+                        : [`Maneuver Burn${i + 1}(Sat);`]));
       t = tb;
     });
-    const r2 = RE + p2, ra2 = RE + a2;
-    s.push(`Report Arrival ${K.map((k) => "Sat.EarthMJ2000Eq." + k).join(" ")} Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP${sc ? " Sat.Fuel.FuelMass" : ""};`,
-           `Propagate Prop(Sat) {Sat.ElapsedSecs = ${num(2 * Math.PI * Math.sqrt(((r2 + ra2) / 2) ** 3 / MU))}};`);
+    s.push(`Report Arrival ${K.map((k) => "Sat.EarthMJ2000Eq." + k).join(" ")} Sat.Earth.SMA Sat.Earth.ECC Sat.EarthMJ2000Eq.INC Sat.EarthMJ2000Eq.RAAN Sat.EarthMJ2000Eq.AOP${sc ? " Sat.Fuel.FuelMass" : ""}` +
+           `${j2 ? " TargetSat.EarthMJ2000Eq.INC TargetSat.EarthMJ2000Eq.RAAN TargetSat.Earth.SMA TargetSat.Earth.ECC TargetSat.EarthMJ2000Eq.AOP" : ""};`,
+           `Propagate Prop(${sats}) {Sat.ElapsedSecs = ${num(2 * Math.PI * Math.sqrt(((r2 + ra2) / 2) ** 3 / MU))}};`);
     return s.join("\n") + "\n";
   }
   function burnsJson(m, o) {
     m = resolve(m);
-    const [p1, a1, p2, a2] = alts(m), z = (x) => x + 0, { y0, plan } = inertialPlan(m, o);
+    const [p1, a1, p2, a2] = alts(m), z = (x) => x + 0;
+    let y0, rows;
+    if (j2On(m)) {
+      const lb = localBurns(m, o);
+      y0 = lb.y0;
+      rows = lb.burns.map(([t, dv, at, signed]) => ({ t_s: t, at, dv_vnb_kms: dv.map(z), dv_mag_kms: norm(dv),
+                                                      ...(signed ? { normal: "for an ascending node; flips at a descending one" } : {}) }));
+    } else {
+      const ip = inertialPlan(m, o);
+      y0 = ip.y0;
+      rows = ip.plan.map(([t, dv]) => ({ t_s: t, dv_kms: dv.map(z), dv_mag_kms: norm(dv) }));
+    }
     return JSON.stringify({ tool: "Orbital Manoeuvre Decision Support Tool", transfer: o.name, dv_kms: o.dv, tof_s: o.tof,
       start_orbit_alt_km: [p1, a1], target_orbit_alt_km: [p2, a2], di_deg: m.di_deg, dw_deg: m.dw_deg, w1_deg: m.w1_deg,
       elements_deg: m.elements ? m.elements.map(z) : null,
       spacecraft: m.mass0_kg == null ? null : { mass0_kg: m.mass0_kg, thrust_chem_N: m.thrust_chem_N, isp_chem_s: m.isp_chem,
                                                  prop_chem_kg: m.prop_chem_kg, propellant_kg: o.prop_kg },
       frame: frameText(m), epoch_utc: EPOCH, mu_km3_s2: MU,
-      start_state_km_kms: y0.map(z), burns: plan.map(([t, dv]) => ({ t_s: t, dv_kms: dv.map(z), dv_mag_kms: norm(dv) })) }, null, 2) + "\n";
+      gravity: j2On(m) ? "J2 (JGM-2): burns in each burn's local VNB frame (velocity, orbit normal, binormal)" : "point mass",
+      start_state_km_kms: y0.map(z), burns: rows }, null, 2) + "\n";
   }
 
   const api = { MU, RE, G0, CPLX, PRESETS, hohmann, hohmannSplitOpt, bielliptic, bieOpt, oneTangent, oneTangentForTof, lowThrust, evaluate,
                 orbitState, lambert, apseTransfer, lambertOptimal, simulateVec, targetMismatch, arcMinRadius, H_ARC_MIN,
                 kepler, circularVecPlan, gmatScript, burnsJson, perifocal, resolve, inertialPlan, epThrust, MC_RUNS, mrg32k3a,
-                mcNormals, chance, pct, pareto };
+                mcNormals, chance, pct, pareto, J2, nodeRate, apseRate, nodalDrift, localBurns, spiralDrift, normals };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ODST = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -1126,7 +1373,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const $ = (id) => document.getElementById(id);
   const NS = "http://www.w3.org/2000/svg";
   const SHORT = { hohmann: "Hohmann", hohmann_split: "Hohmann split", bielliptic: "Bi-elliptic", one_tangent: "One-tangent", low_thrust: "Low-thrust",
-                  apse: "Apse-to-apse", lambert: "Lambert" };
+                  apse: "Apse-to-apse", lambert: "Lambert", nodal_drift: "Nodal drift" };
   const col = (k) => `var(--s-${k})`;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)");
   const ICON_CHECK = '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -1135,7 +1382,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
 
   const DEFAULT = { alt1: 400, alt2: 35786, apo1: null, apo2: null, dw_deg: 0, di_deg: 28.5, dv_budget: 6.5, margin_pct: 5, tof_max_h: 4800, rb_max: 384400,
                     propulsion: "both", isp_chem: 320, tw_chem: 0.5, isp_ep: 1600, accel_ep: 0.0005, preset: "Balanced",
-                    orient: "relative", inc1: 28.5, raan1: 0, argp1: 0, inc2: 0, raan2: 0, argp2: 0,   // elements: LEO at 28.5 deg -> GEO
+                    orient: "relative", inc1: 28.5, raan1: 0, argp1: 0, inc2: 0, raan2: 0, argp2: 0, grav: "twobody",   // elements: LEO at 28.5 deg -> GEO
                     vehicle: "generic", mass0_kg: 1000, thrust_chem_N: 4900, prop_chem_kg: 800, power_ep_kW: 6.5, eff_ep: 0.6, prop_ep_kg: 100,
                     uncert: "off", sigma_isp_pct: 1, sigma_thrust_pct: 2, sigma_point_deg: 0.5, confidence_pct: 90 };
   const EXAMPLES = [
@@ -1149,6 +1396,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     { label: "Kourou GTO", v: { alt1: 250, apo1: 35786, orient: "elements", inc1: 6, argp1: 178, propulsion: "chemical" } },
     { label: "Small tank", v: { vehicle: "spacecraft", prop_chem_kg: 500, prop_ep_kg: 350 } },
     { label: "Monte Carlo", v: { uncert: "on", tof_max_h: 3300, preset: "Propellant-critical" } },
+    { label: "Nodal drift", v: { orient: "elements", grav: "j2", alt1: 500, alt2: 500, inc1: 51.6, raan1: 0, inc2: 51.6, raan2: 10,
+                                 tof_max_h: 384, preset: "Propellant-critical" } },
   ];
   const numIds = ["alt1", "apo1", "alt2", "apo2", "dw_deg", "di_deg", "inc1", "raan1", "argp1", "inc2", "raan2", "argp2",
                   "mass0_kg", "thrust_chem_N", "prop_chem_kg", "power_ep_kW", "eff_ep", "prop_ep_kg", "dv_budget", "margin_pct", "tof_max_h", "rb_max", "isp_chem", "tw_chem", "isp_ep", "accel_ep",
@@ -1239,6 +1488,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     document.querySelector(`input[name="orient"][value="${s.orient}"]`).checked = true;
     document.querySelector(`input[name="vehicle"][value="${s.vehicle}"]`).checked = true;
     document.querySelector(`input[name="uncert"][value="${s.uncert}"]`).checked = true;
+    document.querySelector(`input[name="grav"][value="${s.grav}"]`).checked = true;
     showShapes();
     document.querySelector(`input[name="propulsion"][value="${s.propulsion}"]`).checked = true;
     setPreset(s.preset);
@@ -1248,13 +1498,14 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   const byElements = () => document.querySelector('input[name="orient"]:checked').value === "elements";
   const bySpacecraft = () => document.querySelector('input[name="vehicle"]:checked').value === "spacecraft";
   const byUncert = () => document.querySelector('input[name="uncert"]:checked').value === "on";
+  const byJ2 = () => document.querySelector('input[name="grav"]:checked').value === "j2";
   function showShapes() {
     const e1 = elliptical(1), e2 = elliptical(2), el = byElements();
     $("apo1").closest(".row").hidden = !e1;
     $("apo2").closest(".row").hidden = !e2; $("dw_deg").closest(".row").hidden = !e2 || el; $("di_deg").closest(".row").hidden = el;
     ["inc1", "raan1", "inc2", "raan2"].forEach((id) => { $(id).closest(".row").hidden = !el; });
     $("argp1").closest(".row").hidden = !(el && e1); $("argp2").closest(".row").hidden = !(el && e2);   // a circle has no periapsis
-    $("planesRow").hidden = !el;
+    $("planesRow").hidden = !el; $("gravRow").hidden = !el;     // J2 needs each orbit's own inclination
     const sc = bySpacecraft();                                  // the spacecraft sets T/W and F/m
     ["mass0_kg", "thrust_chem_N", "prop_chem_kg", "power_ep_kW", "eff_ep", "prop_ep_kg"].forEach((id) => { $(id).closest(".row").hidden = !sc; });
     $("tw_chem").closest(".row").hidden = sc; $("accel_ep").closest(".row").hidden = sc; $("derivedRow").hidden = !sc;
@@ -1285,6 +1536,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     if (byElements()) m.elements = [m.inc1, m.raan1, m.apo1 == null ? 0 : m.argp1, m.inc2, m.raan2, m.apo2 == null ? 0 : m.argp2];
     if (!bySpacecraft()) m.mass0_kg = null;
     m.uncertainty = byUncert();
+    m.j2 = byElements() && byJ2();
     return m;
   }
   function validate() {
@@ -1308,7 +1560,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   let frame = 0;
   const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; run({}); }); };
   numIds.forEach((id) => $(id).addEventListener("input", () => { clearExample(); schedule(); }));
-  document.querySelectorAll('input[name="shape1"], input[name="shape2"], input[name="orient"], input[name="vehicle"], input[name="uncert"]').forEach((r) => r.addEventListener("change", () => {
+  document.querySelectorAll('input[name="shape1"], input[name="shape2"], input[name="orient"], input[name="vehicle"], input[name="uncert"], input[name="grav"]').forEach((r) => r.addEventListener("change", () => {
     showShapes(); layoutSeg(r.closest(".seg"), true); clearExample(); run({});
   }));
   document.querySelectorAll('input[name="propulsion"]').forEach((r) => r.addEventListener("change", () => {
@@ -1368,8 +1620,25 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
   }
 
   // ---------------------------------------------------------------- verdict
+  const fmtV = (x) => (Math.abs(x) < 1 ? `${(1e3 * Math.abs(x)).toFixed(1)} m/s` : `${Math.abs(x).toFixed(3)} km/s`);
+  // What J2 did to the plan, for the verdict and the ranking
+  function j2Note(o) {
+    if (o.key === "low_thrust" && o.params && o.params.corrections > 0)
+      return ` J2 turns the planes apart during the spiral: ${o.params.corrections} low-thrust plane change${o.params.corrections > 1 ? "s" : ""} at the target orbit add ${fmtV(o.j2_dv)}.`;
+    return isFinite(o.j2_dv) && Math.abs(o.j2_dv) >= 5e-4
+      ? ` The plan aims for where J2 will have turned the target's plane on arrival, which ${o.j2_dv > 0 ? "adds" : "saves"} ${fmtV(o.j2_dv)}.` : "";
+  }
   function detail(o, m) {
+    return detailText(o, m) + j2Note(o);
+  }
+  function detailText(o, m) {
     const p = o.params || {};
+    if (o.key === "nodal_drift") {
+      const wait = fmtTs(p.wait_days * 86400), here = Math.abs(p.alt_d - m.alt1) < 0.5;
+      return `${here ? `Wait ${wait} on the start orbit` : `${p.alt_d > m.alt1 ? "Climb" : "Drop"} to a ${fmtKm(p.alt_d)} km parking orbit and wait ${wait}`}: ` +
+             `there its node moves ${Math.abs(p.rate_deg_day).toFixed(2)}°/day against the target's, closing the ${fmtDeg(Math.abs(p.gap_deg))}° gap between them. ` +
+             `Then a Hohmann transfer to the target${p.di_deg > 0.005 ? `, with the ${fmtDeg(p.di_deg)}° inclination change on the node line` : ""}.`;
+    }
     if (o.key === "hohmann_split") return `Split the ${fmtDeg(m.di_deg)}° plane change: ${(p.split_at_r1 * m.di_deg).toFixed(2)}° at departure and ${((1 - p.split_at_r1) * m.di_deg).toFixed(2)}° at arrival.`;
     if (o.key === "bielliptic") return `Coast out to an optimal apoapsis of ${fmtKm(p.rb)} km (${p.rb_over_r1.toFixed(1)} times the initial radius), where a plane change is cheapest, then fall to the target orbit.`;
     if (o.key === "one_tangent") return `A faster transfer ellipse (k = ${p.k.toFixed(4)}, e = ${p.e.toFixed(3)}) meets the target orbit at a ${p.fpa_deg.toFixed(1)}° flight-path angle.${o.note.startsWith("k solved") ? " k is the smallest value that meets the time limit." : ""}`;
@@ -1428,7 +1697,10 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       r.style.setProperty("--c", col(o.key));
       const [main, sub] = splitName(o.name);
       const top = res.rec && res.rec.key === o.key;
-      const caption = o.feasible ? cap(sub || (o.key === "bielliptic" ? "three burns via a high apoapsis" : "")) : o.reasons.join("; ");
+      const j2 = o.key === "nodal_drift" && o.applicable ? `wait ${fmtTs(o.params.wait_days * 86400)} at ${fmtKm(o.params.alt_d)} km`
+               : isFinite(o.j2_dv) && Math.abs(o.j2_dv) >= 5e-4 ? `J2 ${o.j2_dv > 0 ? "+" : "−"}${fmtV(o.j2_dv)}` : "";
+      const base = cap(sub || (o.key === "bielliptic" ? "three burns via a high apoapsis" : ""));
+      const caption = o.feasible ? [base, j2].filter(Boolean).join(" · ") : o.reasons.join("; ");
       r.innerHTML = `<div class="name" role="cell"><span class="dotc"></span><span class="nm"><b>${main}${top ? '<span class="tag">Recommended</span>' : ""}</b>${caption ? `<span>${caption}</span>` : ""}</span></div>
         ${isFinite(o.dv) ? `<span class="num" role="cell">${o.dv.toFixed(3)}</span><span class="num" role="cell">${fmtTs(o.tof)}</span><span class="num" role="cell">${o.burns || "Cont."}</span>
         <span class="num" role="cell">${propText(o)}</span>` : '<span class="num" role="cell">–</span>'.repeat(4)}<span class="num" role="cell">${o.complexity.toFixed(1)}</span>
@@ -1563,6 +1835,17 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
       rmax = Math.max(rmax, o.ra);
       if (o.raising) arc(o.rp, o.ra, 0, 0, o.nu); else arc(o.rp, o.ra, Math.PI, 0, Math.PI - o.nu);
       burns.push(0, pts.length - 1);
+    } else if (o.key === "nodal_drift" && o.applicable) {   // Hohmann out, 3/4 of a turn for the wait (the burns sit apart), Hohmann on
+      const rd = O.RE + o.params.alt_d, t1 = O.hohmann(r1, rd, 0).tof, tw = o.params.wait_days * 86400;
+      const hoh = (a, b, t0) => { if (b > a) arc(a, b, t0, t0, t0 + Math.PI); else arc(b, a, t0 + Math.PI, t0, t0 + Math.PI); };
+      rmax = Math.max(rmax, rd);
+      pts.push([r1, 0]);
+      if (Math.abs(rd - r1) > 1e-6) hoh(r1, rd, 0);
+      const idx1 = pts.length - 1, th = pts[idx1][1];
+      for (let i = 1; i <= 120; i++) pts.push([rd, th + 1.5 * Math.PI * i / 120]);
+      const idxW = pts.length - 1;
+      if (Math.abs(r2 - rd) > 1e-6) hoh(rd, r2, th + 1.5 * Math.PI);
+      for (const [t] of o.bplan) burns.push(t <= 0 ? 0 : Math.abs(t - t1) < 1 ? idx1 : Math.abs(t - t1 - tw) < 1 ? idxW : pts.length - 1);
     }
     return { pts, burns, rmax };
   }
@@ -1581,7 +1864,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     const r1 = res.r1, r2 = res.r2, W = 360, H = 330, cx = W / 2, cy = H / 2;
     const [main, sub] = splitName(o.name);
     $("geoTitle").textContent = main + (sub ? ", " + sub : "");
-    const canExport = o.applicable && !!o.plan && o.plan.length > 0;   // low thrust has no burns
+    const canExport = o.applicable && ((!!o.plan && o.plan.length > 0) || o.key === "nodal_drift");   // low thrust has no burns
     $("exGmat").disabled = $("exJson").disabled = !canExport;
     $("exLabel").textContent = canExport ? "Download" : "Nothing to download";
     const { pts, burns, rmax } = res.ell ? ellGeometry(o, res) : geometry(o, r1, r2);
@@ -1599,6 +1882,8 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     } else {
       el("circle", { cx, cy, r: r1 * S }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
       if (Math.abs(r2 - r1) > 1e-6) el("circle", { cx, cy, r: r2 * S, "stroke-dasharray": "4 5" }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
+      if (o.key === "nodal_drift" && o.applicable)
+        el("circle", { cx, cy, r: (O.RE + o.params.alt_d) * S, "stroke-dasharray": "1.5 4" }, svg, { fill: "none", stroke: "var(--orbit)", strokeWidth: "1.3" });
     }
     const c = col(o.key), XY = pts.map(P);
     const markers = burns.map((idx, i) => {
@@ -1640,6 +1925,7 @@ footer { font-size: 12.5px; color: var(--label-3); max-width: 100ch; line-height
     }, animate ? { from: 0, response: 1.05, eps: 1e-4 } : { snap: true });
     $("geoSub").textContent = o.key === "low_thrust"
       ? `Schematic spiral: 6 turns drawn, about ${Math.round(o.revs).toLocaleString("en-US")} in flight.`
+      : o.key === "nodal_drift" ? `Top view, to scale. Dotted: the ${fmtKm(o.params.alt_d)} km parking orbit, where it waits ${fmtTs(o.params.wait_days * 86400)} (three quarters of a turn drawn).`
       : res.ell ? `Top view, to scale. Solid: start orbit. Dashed: target orbit.${m.di_deg > 0 ? ` Its plane is tilted ${fmtDeg(m.di_deg)}°, so it looks narrower here.` : ""}`
       : `Top view, to scale. Solid: ${fmtKm(m.alt1)} km start orbit. Dashed: ${fmtKm(m.alt2)} km target.${m.di_deg > 0 ? ` The ${fmtDeg(m.di_deg)}° plane change is out of this view.` : ""}`;
   }
