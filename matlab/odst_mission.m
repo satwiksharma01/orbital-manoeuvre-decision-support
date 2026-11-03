@@ -16,6 +16,9 @@ function m = odst_mission(varargin)
 %                  (odst_ep_thrust) and accel_ep at departure, the electric thrust stays
 %                  constant as the mass falls, and prop_chem_kg / prop_ep_kg [kg], the
 %                  propellant on board, are hard limits
+%   j2             true, with orbital elements: every plan allows for J2 (Earth's
+%                  oblateness) turning each orbit's plane during the transfer, and the
+%                  nodal drift option uses that turn to change the plane. Default false
 %   uncertainty    true: every option that meets the limits is flown 4000 times with
 %                  random errors (odst_mc_normals): Isp and thrust, 1 sigma sigma_isp_pct
 %                  and sigma_thrust_pct [%], and for each impulsive burn a pointing error,
@@ -39,7 +42,7 @@ m = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg', 0, 'd
            'k_one_tangent', 1.5, 'weights', [0.30 0.20 0.30 0.20], 'w1_deg', 0, 'elements', [], 'R', [], ...
            'mass0_kg', NaN, 'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, ...
            'prop_ep_kg', 100, 'uncertainty', false, 'sigma_isp_pct', 1, 'sigma_thrust_pct', 2, ...
-           'sigma_point_deg', 0.5, 'confidence_pct', 90);
+           'sigma_point_deg', 0.5, 'confidence_pct', 90, 'j2', false);
 for i = 1:2:numel(varargin)
     if ~isfield(m, varargin{i})
         error('odst_mission:badField', 'Unknown mission field "%s".', varargin{i});

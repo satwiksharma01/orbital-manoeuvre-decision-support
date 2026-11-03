@@ -13,9 +13,14 @@ if m.uncertainty
             m.sigma_isp_pct, m.sigma_thrust_pct, m.sigma_point_deg, m.confidence_pct);
     fit = sprintf(' %5s', 'fit');
 end
-fprintf('%-38s %8s %8s %11s %5s %7s %5s%s %6s %7s  %s\n', 'Option', 'dv km/s', 'loss m/s', 'TOF', ...
-        'burns', 'mp/m0', 'cplx', fit, 'WS', 'TOPSIS', 'status');
-fprintf('%s\n', repmat('-', 1, 113 + numel(fit)));
+j2 = m.j2 && ~isempty(m.elements); j2c = '';
+if j2
+    fprintf('J2: each plan allows for the planes'' drift; ''J2 m/s'' is its dv minus the two-body plan''s\n');
+    j2c = sprintf(' %7s', 'J2 m/s');
+end
+fprintf('%-38s %8s %8s %11s %5s %7s %5s%s%s %6s %7s  %s\n', 'Option', 'dv km/s', 'loss m/s', 'TOF', ...
+        'burns', 'mp/m0', 'cplx', fit, j2c, 'WS', 'TOPSIS', 'status');
+fprintf('%s\n', repmat('-', 1, 113 + numel(fit) + numel(j2c)));
 for i = 1:numel(opts)
     o = opts(i);
     if m.uncertainty
@@ -28,8 +33,15 @@ for i = 1:numel(opts)
     else
         st = ['X ' o.reasons]; ws = '-'; tp = '-';
     end
-    fprintf('%-38s %8.4f %8.1f %11s %5d %7.3f %5.1f%s %6s %7s  %s\n', o.name, o.dv, 1e3*o.dv_loss, ...
-            odst_fmt_time(o.tof), o.burns, o.prop_frac, o.complexity, fit, ws, tp, st);
+    if j2
+        if isnan(o.j2_dv), j2c = sprintf(' %7s', '-'); else, j2c = sprintf(' %+7.1f', 1e3*o.j2_dv); end
+    end
+    fprintf('%-38s %8.4f %8.1f %11s %5d %7.3f %5.1f%s%s %6s %7s  %s\n', o.name, o.dv, 1e3*o.dv_loss, ...
+            odst_fmt_time(o.tof), o.burns, o.prop_frac, o.complexity, fit, j2c, ws, tp, st);
+    if strcmp(o.key, 'nodal_drift') && o.applicable
+        fprintf('%-38s wait %.2f days at %.0f km, where the planes'' nodes close at %+.3f deg/day (%+.2f deg)\n', '', ...
+                o.params.wait_days, o.params.alt_d, o.params.rate_deg_day, o.params.gap_deg);
+    end
 end
 if isempty(rec)
     fprintf('Recommended: NONE FEASIBLE - relax the constraints\n');
