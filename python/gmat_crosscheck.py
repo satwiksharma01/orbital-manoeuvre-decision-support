@@ -11,6 +11,8 @@
 4. Uncertainty: GMAT flies each burn off course by the pointing error of a Monte Carlo run,
    then the trim, and must arrive on target having used the propellant the tool's trim cost,
    2 dv sin(theta/2) per burn, predicts.
+5. J2: GMAT flies the tool's J2 plans (the nodal drift, and transfers aimed at where the target's
+   plane will be) in a J2 field with the target orbit alongside, and compares the two planes.
 
 Needs a local GMAT (https://sourceforge.net/projects/gmat/). Not run in CI.
 Run: python python/gmat_crosscheck.py [path/to/GmatConsole.exe]
@@ -202,6 +204,39 @@ def main():
                 report(dh < 1e-6 and de < 1e-6 and abs(used - ref) < 1e-6,
                        f"{m.mass0_kg:g} kg, {m.alt1:.0f}x{m.ra1 - RE:.0f} -> {m.alt2:.0f} km: {o.name:36s} run {run + 1}: trims "
                        f"{1e3 * trims:6.1f} m/s; |dh|/h {dh:.1e}, |de| {de:.1e}; propellant GMAT {used:.6f} vs tool {ref:.6f} kg")
+    print("\n=== 5. J2: the tool's J2 plans in GMAT's J2 field (JGM-2), with the target orbit alongside ===")
+
+    def planes(g, k):
+        """Angle (deg) between Sat's plane (INC, RAAN at g[8], g[9]) and TargetSat's (at g[k], g[k + 1])."""
+        n = lambda i, O: np.array([math.sin(O) * math.sin(i), -math.cos(O) * math.sin(i), math.cos(i)])
+        return math.degrees(math.acos(min(1.0, n(*map(math.radians, g[8:10])) @ n(*map(math.radians, g[k:k + 2])))))
+    for kw in (dict(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0)), dict(alt1=500, alt2=500, elements=(51.6, 0, 0, 53, 10, 0)),
+               dict(alt1=400, alt2=1200, elements=(51.6, 15, 0, 51.6, 0, 0))):
+        m = Mission(j2=True, tof_max_h=16 * 24, **kw)
+        o = next(o for o in evaluate(m) if o.key == "nodal_drift")
+        g = gmat(console, lambda rep: gmat_script(m, o, rep))
+        if g is None:
+            report(False, f"nodal drift {kw['elements']}: GMAT run failed")
+            continue
+        ang = planes(g, 11)
+        report(ang < 0.02 * m.di_deg, f"Nodal drift {m.alt1:.0f} -> {m.alt2:.0f} km, i {m.elements[0]:g} -> {m.elements[3]:g}, RAAN "
+                                      f"{m.elements[1]:g} -> {m.elements[4]:g}: {o.dv:.4f} km/s, wait {o.params['wait_days']:.2f} days at "
+                                      f"{o.params['alt_d']:.0f} km; GMAT: {ang:.3f} deg from the target's plane (direct plane change "
+                                      f"{m.di_deg:.2f} deg), SMA {g[6]:.1f} vs {g[13]:.1f} km")
+    for kw in (dict(alt1=20200, alt2=500, elements=(55, 0, 0, 55, 3, 0)), dict(alt1=35786, alt2=600, elements=(30, 0, 0, 51.6, 20, 0)),
+               dict(alt1=400, alt2=20200, elements=(28.5, 0, 0, 55, 40, 0))):
+        m = Mission(j2=True, tof_max_h=1e5, **kw)
+        o = next(o for o in evaluate(m) if o.key == "hohmann")
+        o2 = next(o for o in evaluate(replace(m, j2=False)) if o.key == "hohmann")
+        ga, gp = (gmat(console, lambda rep, oo=oo: gmat_script(m, oo, rep)) for oo in (o, o2))
+        if ga is None or gp is None:
+            report(False, f"Hohmann {kw['elements']}: GMAT run failed")
+            continue
+        aimed, plain = planes(ga, 11), planes(gp, 11)
+        descent = m.r2 < m.r1      # the target's own drift dominates: the aim must win clearly; 0.1 deg: J2 within one orbit, of order J2 (R/p)^2
+        report(aimed < 0.1 and aimed < plain / 4 if descent else aimed < 0.15,
+               f"Hohmann {m.alt1:.0f} -> {m.alt2:.0f} km, i {m.elements[0]:g} -> {m.elements[3]:g}, {o.tof / 3600:.1f} h: GMAT, two-body plan "
+               f"{plain:.3f} deg from the target's plane, aimed {aimed:.4f} deg ({1e3 * o.j2_dv:+.1f} m/s)")
     print(f"\n{'ALL CHECKS PASSED' if not fails else f'{fails} CHECK(S) FAILED'}")
     sys.exit(fails)
 

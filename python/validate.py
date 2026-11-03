@@ -10,11 +10,11 @@ from scipy.integrate import quad, solve_ivp
 from scipy.optimize import brentq, minimize_scalar
 from scipy.stats import kstest, norm
 
-from odst import (G0, H_ARC_MIN, MC_RUNS, MU, RE, Mission, _rotate, apse_transfer, arc_min_radius, bielliptic, burns_json,
-                  chance, ep_thrust, evaluate, gmat_script, gravity_loss, hohmann, hohmann_optimal_split, inertial_plan,
-                  kepler, lambert, lambert_optimal, low_thrust, mc_normals, mrg32k3a, one_tangent, orbit_basis,
-                  orbit_elements, orbit_state, perifocal, print_table, recommend, simulate, simulate_vec,
-                  target_mismatch, vcirc, vvis)
+from odst import (G0, H_ARC_MIN, J2, MC_RUNS, MU, NODAL_ALT_MIN, RE, Mission, _rotate, _spiral_drift, apse_rate, apse_transfer, arc_min_radius,
+                  bielliptic, burns_json, chance, ep_thrust, evaluate, gmat_script, gravity_loss, hohmann, hohmann_optimal_split,
+                  inertial_plan, kepler, lambert, lambert_optimal, local_burns, low_thrust, mc_normals, mrg32k3a, node_rate,
+                  one_tangent, orbit_basis, orbit_elements, orbit_state, perifocal, print_table, recommend, simulate,
+                  simulate_vec, target_mismatch, vcirc, vvis)
 
 sys.stdout.reconfigure(encoding="utf-8")
 fails = 0
@@ -184,11 +184,11 @@ fails += not ok
 print(f"[{'PASS' if ok else 'FAIL'}] MRG32k3a reproduces the published test vector (seed 1234567, first five outputs)")
 Z = mc_normals()
 ks = kstest(Z.ravel(), "norm").pvalue
-cmax = np.max(np.abs(np.corrcoef(Z.T) - np.eye(8)))
+cmax = np.max(np.abs(np.corrcoef(Z.T) - np.eye(Z.shape[1])))
 ok = ks > 0.01 and abs(Z.mean()) < 3 / math.sqrt(Z.size) and abs(Z.std() - 1) < 3 / math.sqrt(2 * Z.size) and cmax < 3 / math.sqrt(MC_RUNS)
 fails += not ok
 print(f"[{'PASS' if ok else 'FAIL'}] {Z.size} Box-Muller normals vs N(0, 1): KS p = {ks:.2f}, mean {Z.mean():.4f}, "
-      f"sd {Z.std():.4f}, largest correlation between the 8 columns {cmax:.3f} (3 sigma {3 / math.sqrt(MC_RUNS):.3f})")
+      f"sd {Z.std():.4f}, largest correlation between the {Z.shape[1]} columns {cmax:.3f} (3 sigma {3 / math.sqrt(MC_RUNS):.3f})")
 # With every error zero, each run is the nominal one: nothing changes
 nominal = cases + [Mission(mass0_kg=1000, prop_chem_kg=500, prop_ep_kg=350), Mission(alt1=500, apo1=39000, alt2=35786, di_deg=63.4),
                    Mission(weights=(0.25, 0.55, 0.05, 0.15), tof_max_h=3300)]
@@ -285,6 +285,201 @@ for _ in range(60):
     n_front += len(on)
 fails += not ok
 print(f"[{'PASS' if ok else 'FAIL'}] Pareto front on 60 random missions ({n_front} options on it): consistent")
+
+print("\n=== 4e. J2: the planes' drift, the spiral, the nodal drift ===")
+# Textbook values: a 700 km sun-synchronous orbit is inclined 98.19 deg (Wertz, Space Mission Analysis and Design), and the
+# apse line stands still at the critical inclination, 63.43 deg
+sso = brentq(lambda i: node_rate(RE + 700, 0.0, i) - 2 * math.pi / (365.2422 * 86400), math.radians(95), math.radians(105))
+check("Sun-synchronous inclination at 700 km [deg]", math.degrees(sso), 98.19, 0.01)
+check("Apse line at the critical inclination, 63.435 deg [deg/day]", math.degrees(apse_rate(RE + 1000, 0.3, math.acos(math.sqrt(0.2)))) * 86400, 0.0, 1e-12)
+
+
+def j2_accel(t, y):
+    r = y[:3]
+    rr = np.linalg.norm(r)
+    z2 = 5 * r[2] ** 2 / rr ** 2
+    return np.concatenate([y[3:], -MU * r / rr ** 3 - 1.5 * J2 * MU * RE ** 2 / rr ** 5 * r * np.array([1 - z2, 1 - z2, 3 - z2])])
+
+
+def normal(y):
+    h = np.cross(y[:3], y[3:])
+    return h / np.linalg.norm(h)
+
+
+# Full J2 (Cowell): the node's drift over 5 days against the formula at the orbit's mean semi-major axis and inclination
+worst = 0.0
+for alt, i in ((500, 51.6), (800, 98.6), (1200, 30.0)):
+    P, Q, _ = perifocal(math.radians(i), 0.0, 0.0)
+    a = RE + alt
+    sol = solve_ivp(j2_accel, (0, 5 * 86400), np.concatenate([a * P, math.sqrt(MU / a) * Q]), method="DOP853", rtol=1e-12,
+                    atol=1e-12, dense_output=True)
+    ts = np.linspace(0, 5 * 86400, 20001)
+    Y = sol.sol(ts)
+    W = np.array([normal(Y[:, k]) for k in range(len(ts))])
+    slope = np.polyfit(ts, np.unwrap(np.arctan2(W[:, 0], -W[:, 1])), 1)[0]
+    am = np.mean([1 / (2 / np.linalg.norm(Y[:3, k]) - Y[3:, k] @ Y[3:, k] / MU) for k in range(len(ts))])
+    worst = max(worst, abs(slope / node_rate(am, 0.0, np.mean(np.arccos(W[:, 2]))) - 1))
+check("Node drift of 3 circular orbits (500, 800, 1200 km), full J2 vs the formula at the mean orbit [largest error, %]",
+      100 * worst, 0.0, 0.3)
+# J2 needs absolute inclinations: off, or with only an inclination change, nothing changes
+el = dict(alt1=400, alt2=1200, elements=(51.6, 0, 0, 51.6, 5, 0), tof_max_h=1e5)
+a, b, c = (evaluate(Mission(**el)), evaluate(Mission(**el, j2=False)), evaluate(Mission(alt1=400, alt2=1200, di_deg=4, j2=True)))
+ok = ([(o.key, o.dv) for o in a] == [(o.key, o.dv) for o in b] and len(a) == 5
+      and [(o.key, o.dv) for o in c] == [(o.key, o.dv) for o in evaluate(Mission(alt1=400, alt2=1200, di_deg=4))])
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] J2 off, or J2 on with only an inclination change: the two-body options, unchanged")
+# An equatorial target (GEO): its node doesn't matter, so J2 changes nothing
+ok = all(o.j2_dv == 0 or math.isnan(o.j2_dv) for o in evaluate(Mission(alt1=400, alt2=35786, elements=(51.6, 120, 0, 0, 0, 0), j2=True)))
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] 51.6 deg LEO -> GEO with J2: every option unchanged (an equatorial target has no node)")
+
+
+# The spiral: Edelbaum's averaged equations in the velocity increment u, with J2 turning both planes about Earth's axis and
+# the yaw steering about the node line, which turns with the spacecraft's own plane. Each leg aims at the target's plane as
+# it is when the leg starts; the plane on arrival must be the target's (the tool stops correcting below 1e-5 rad).
+def spiral_flight(m):
+    W1, W2 = (perifocal(*map(math.radians, m.elements[k:k + 3]))[2] for k in (0, 3))
+    rn, z = node_rate(m.r2, 0.0, math.radians(m.elements[3])), np.array([0.0, 0.0, 1.0])
+    a0, ve = m.accel_ep * 1e-3, m.isp_ep * G0
+    dtdu = (lambda u: math.exp(-u / ve) / a0) if m.mass0_kg is not None else (lambda u: 1 / a0)
+    h, ra, u0, t, first = W1.copy(), m.r1, 0.0, 0.0, None
+    for leg in range(30):
+        Wt = _rotate(W2, z, rn * t)                         # the target's plane at the start of the leg
+        di = math.acos(min(1.0, h @ Wt))
+        if leg and di < 1e-5:
+            break
+        V0, V1 = vcirc(ra), vcirc(m.r2)
+        b0 = math.atan2(math.sin(math.pi / 2 * di), V0 / V1 - math.cos(math.pi / 2 * di))
+        dv = math.sqrt(V0 ** 2 + V1 ** 2 - 2 * V0 * V1 * math.cos(math.pi / 2 * di))
+        k0 = np.cross(h, Wt) / max(np.linalg.norm(np.cross(h, Wt)), 1e-300)
+
+        def f(u, y):
+            V, hh, dO = y[0], y[1:4] / np.linalg.norm(y[1:4]), y[4]
+            b = math.atan2(V0 * math.sin(b0), V0 * math.cos(b0) - u)
+            rate = node_rate(MU / V ** 2, 0.0, math.acos(max(-1.0, min(1.0, hh[2]))))
+            k = _rotate(k0, z, dO)
+            return np.concatenate([[-math.cos(b)], 2 / math.pi * math.sin(b) / V * np.cross(k, hh)
+                                   + rate * dtdu(u0 + u) * np.cross(z, hh), [rate * dtdu(u0 + u)]])
+        y = solve_ivp(f, (0, dv), np.concatenate([[V0], h, [0.0]]), method="DOP853", rtol=1e-12, atol=1e-13).y[:, -1]
+        if first is None:
+            first = (y[4], _rotate(Wt, z, y[4]) @ (y[1:4] / np.linalg.norm(y[1:4])), dv)
+        h, ra = y[1:4] / np.linalg.norm(y[1:4]), m.r2
+        t += quad(lambda u: dtdu(u0 + u), 0, dv)[0]
+        u0 += dv
+    return first, u0, t, math.acos(min(1.0, h @ _rotate(W2, z, rn * t)))
+
+
+for kw in (dict(alt1=400, alt2=1200, elements=(51.6, 0, 0, 51.6, 0, 0), tof_max_h=1e5),
+           dict(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0), tof_max_h=1e5),
+           dict(alt1=400, alt2=1200, elements=(51.6, 0, 0, 51.6, 0, 0), tof_max_h=1e5, mass0_kg=1000, prop_ep_kg=150)):
+    m = Mission(j2=True, **kw)
+    lt = next(o for o in evaluate(m) if o.key == "low_thrust")
+    W1, W2 = (perifocal(*map(math.radians, m.elements[k:k + 3]))[2] for k in (0, 3))
+    dv0 = low_thrust(m.r1, m.r2, math.acos(min(1.0, W1 @ W2)), m.accel_ep)[0]
+    (dO, cos_end, _), u, t, left = spiral_flight(m)
+    sim = _spiral_drift(m, m.r1, m.r2, W1, W2, dv0, 0.0)
+    ok = (abs(dO - sim) < 1e-9 and 1 - cos_end < 1e-15 and abs(u - lt.dv) < 1e-9 and abs(t - lt.tof) < 1e-6 * lt.tof
+          and left < 2e-5)
+    fails += not ok
+    print(f"[{'PASS' if ok else 'FAIL'}] Spiral {m.alt1:.0f} -> {m.alt2:.0f} km, RAAN {m.elements[4]:g}{', spacecraft' if m.mass0_kg else ''}: "
+          f"first leg's drift, averaged equations {math.degrees(dO):.6f} vs Simpson {math.degrees(sim):.6f} deg; "
+          f"{lt.params['corrections']} corrections, {lt.dv:.4f} km/s (two-body {dv0:.4f}), {lt.tof / 86400:.1f} days; "
+          f"on arrival {math.degrees(left):.5f} deg from the target's plane")
+m = Mission(alt1=400, alt2=1200, elements=(51.6, 0, 0, 51.6, 0, 0), tof_max_h=1e5, accel_ep=1e-4, j2=True)
+lt = next(o for o in evaluate(m) if o.key == "low_thrust")
+ok = not lt.applicable and "faster than the spiral" in lt.note
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Spiral at F/m 1e-4 m/s^2 (48 days): not offered ({lt.note})")
+
+
+def fly_j2(m, o):
+    """Fly option o's J2 burns (local_burns: local VNB frame, at apsides, times or the next equator crossing) under full J2,
+    with the target orbit flown alongside from its elements; return the angle between the two planes on arrival (deg),
+    the radius difference (km) and the flight time."""
+    y0, burns = local_burns(m, o)
+    i2, O2, w2 = map(math.radians, m.elements[3:])
+    P, Q, _ = perifocal(i2, O2, w2)
+    a2, e2 = (m.r2 + m.ra2) / 2, (m.ra2 - m.r2) / (m.ra2 + m.r2)
+    yt = np.concatenate([a2 * (1 - e2) * P, math.sqrt(MU * (1 + e2) / (a2 * (1 - e2))) * Q])   # at its periapsis
+    y, t, tp = y0.copy(), 0.0, 0.0
+    for tb, dv, at, signed in burns:
+        legs = []
+        if at in ("apoapsis", "periapsis"):          # half the planned coast, then on to the apsis
+            legs = [((tb - tp) / 2, None), (tb - tp, (lambda s, x: x[:3] @ x[3:], -1 if at == "apoapsis" else 1))]
+        elif tb > tp:
+            legs = [(tb - tp, None)]
+        if at == "node":
+            legs.append((86400.0, (lambda s, x: x[2], 0)))
+        for dt, ev in legs:
+            if ev:
+                fn = ev[0]
+                fn.terminal, fn.direction = True, ev[1]
+            s_ = solve_ivp(j2_accel, (0, dt), np.concatenate([y, yt]) if False else y, method="DOP853", rtol=1e-12, atol=1e-12,
+                           events=fn if ev else None)
+            y, step = s_.y[:, -1], s_.t[-1]
+            yt = solve_ivp(j2_accel, (0, step), yt, method="DOP853", rtol=1e-12, atol=1e-12).y[:, -1]
+            t += step
+        V = y[3:] / np.linalg.norm(y[3:])
+        n = normal(y)
+        sgn = -1.0 if signed and y[5] < 0 else 1.0
+        y[3:] += dv[0] * V + sgn * dv[1] * n + dv[2] * np.cross(V, n)
+        tp = tb
+    return math.degrees(math.acos(min(1.0, normal(y) @ normal(yt)))), np.linalg.norm(y[:3]) - np.linalg.norm(yt[:3]), t
+
+
+# The nodal drift, flown under full J2 with the target alongside: within 2 % of the direct plane change it replaces
+for kw in (dict(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0)), dict(alt1=500, alt2=500, elements=(51.6, 0, 0, 53, 10, 0)),
+           dict(alt1=400, alt2=1200, elements=(51.6, 15, 0, 51.6, 0, 0))):
+    m = Mission(j2=True, tof_max_h=16 * 24, weights=(0.25, 0.55, 0.05, 0.15), **kw)
+    opts = evaluate(m)
+    o = next(o for o in opts if o.key == "nodal_drift")
+    ang, dr, t = fly_j2(m, o)
+    ok = ang < 0.02 * m.di_deg and abs(t - o.tof) < 3600
+    fails += not ok
+    p = o.params
+    print(f"[{'PASS' if ok else 'FAIL'}] Nodal drift {m.alt1:.0f} -> {m.alt2:.0f} km, i {m.elements[0]:g} -> {m.elements[3]:g}, RAAN "
+          f"{m.elements[1]:g} -> {m.elements[4]:g}: {o.dv:.4f} km/s, wait {p['wait_days']:.2f} days at {p['alt_d']:.0f} km; flown with "
+          f"full J2: {ang:.3f} deg from the target's plane (direct plane change {m.di_deg:.2f} deg), radius {dr:+.1f} km")
+# ... and it changes the decision: propellant-critical, 16 days, RAAN +10 deg at 500 km
+m = Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 51.6, 10, 0), tof_max_h=16 * 24, weights=(0.25, 0.55, 0.05, 0.15), j2=True)
+a, b = recommend(evaluate(replace(m, j2=False))), recommend(evaluate(m))
+ok = a.key == "hohmann" and b.key == "nodal_drift" and b.dv < 0.35 * a.dv
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] RAAN +10 deg at 500 km, propellant-critical, 16 days: two-body {a.name} {a.dv:.3f} km/s; "
+      f"with J2 {b.name} {b.dv:.3f} km/s")
+# Aimed impulsive transfers, flown under full J2 with local burns at the apsides: where the target's drift dominates (a
+# descent to an inclined LEO), the aim takes the arrival from tenths of a degree to hundredths
+for kw in (dict(alt1=20200, alt2=500, elements=(55, 0, 0, 55, 3, 0)), dict(alt1=35786, alt2=600, elements=(30, 0, 0, 51.6, 20, 0))):
+    m = Mission(j2=True, tof_max_h=1e5, **kw)
+    o2 = next(o for o in evaluate(replace(m, j2=False)) if o.key == "hohmann")
+    o = next(o for o in evaluate(m) if o.key == "hohmann")
+    plain, aimed = fly_j2(m, o2)[0], fly_j2(m, o)[0]
+    ok = aimed < 0.1 and aimed < plain / 4          # 0.1 deg: J2 within one orbit, of order J2 (R/p)^2
+    fails += not ok
+    print(f"[{'PASS' if ok else 'FAIL'}] Hohmann {m.alt1:.0f} -> {m.alt2:.0f} km, i {m.elements[0]:g} -> {m.elements[3]:g}, "
+          f"{o.tof / 3600:.1f} h, flown with full J2: two-body plan {plain:.3f} deg from the target's plane, aimed {aimed:.4f} deg "
+          f"({1e3 * o.j2_dv:+.1f} m/s)")
+# The nodal drift under uncertainty (four burns) and in the export: J2 field, VNB burns, events, the target alongside
+m = Mission(alt1=500, alt2=500, elements=(51.6, 0, 0, 53, 10, 0), tof_max_h=16 * 24, j2=True, uncertainty=True)
+o = next(o for o in evaluate(m) if o.key == "nodal_drift")
+txt, js = gmat_script(m, o), json.loads(burns_json(m, o))
+ok = (o.burns == 4 and o.chance == 1.0 and "GravityField.Earth.Degree = 2;" in txt and txt.count("Axes = VNB;") == 5
+      and "{Sat.EarthMJ2000Eq.Z = 0}" in txt and "If Sat.EarthMJ2000Eq.VZ > 0" in txt and "Create Spacecraft TargetSat;" in txt
+      and [b["at"] for b in js["burns"]] == ["time", "apoapsis", "node", "periapsis"])
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Nodal drift with an inclination change: 4 burns, fits all {MC_RUNS} runs with the errors; "
+      f"GMAT script with a J2 field, VNB burns, the node crossing and the target alongside; JSON events {[b['at'] for b in js['burns']]}")
+
+# From a polar orbit J2 leaves the node still: every parking orbit up to the target's radius takes as long (to
+# rounding), so with the time limit out of reach the cheapest of them is taken, here parking where it starts
+m = Mission(alt1=452, alt2=1273, elements=(90, 6, 0, 84.2, 235.2, 0), tof_max_h=20, j2=True)
+o = next(o for o in evaluate(m) if o.key == "nodal_drift")
+di = math.radians(90 - 84.2)
+best = min(hohmann(m.r1, r, 0.0)[0] + hohmann(r, m.r2, di)[0] for r in np.linspace(RE + NODAL_ALT_MIN, m.r2, 2001))
+ok = o.applicable and not o.feasible and abs(o.params["alt_d"] - m.alt1) < 1e-9 and o.dv <= best
+fails += not ok
+print(f"[{'PASS' if ok else 'FAIL'}] Nodal drift from a polar orbit, time limit out of reach: {o.dv:.4f} km/s parking at "
+      f"{o.params['alt_d']:.0f} km, the cheapest of the equally slow parking orbits (a fine sweep: {best:.4f} km/s at best)")
 
 print("\n=== 5. Elliptical orbits and Lambert ===")
 # Curtis, Orbital Mechanics for Engineering Students, Example 5.2
