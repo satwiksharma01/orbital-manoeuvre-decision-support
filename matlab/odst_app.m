@@ -18,7 +18,8 @@ defaults = struct('alt1', 400, 'alt2', 35786, 'apo1', NaN, 'apo2', NaN, 'dw_deg'
                   'rb_max', 384400, 'propulsion', 'both', 'isp_chem', 320, 'tw_chem', 0.5, 'isp_ep', 1600, ...
                   'accel_ep', 5e-4, 'preset', 'Balanced', 'elements', [], 'mass0_kg', NaN, ...
                   'thrust_chem_N', 4900, 'prop_chem_kg', 800, 'power_ep_kW', 6.5, 'eff_ep', 0.6, 'prop_ep_kg', 100, ...
-                  'uncert', 'off', 'sigma_isp_pct', 1, 'sigma_thrust_pct', 2, 'sigma_point_deg', 0.5, 'confidence_pct', 90);
+                  'uncert', 'off', 'sigma_isp_pct', 1, 'sigma_thrust_pct', 2, 'sigma_point_deg', 0.5, 'confidence_pct', 90, ...
+                  'grav', 'twobody');
 defEl = [28.5 0 0 0 0 0];       % element inputs before any are entered: LEO at 28.5 deg -> GEO
 examples = {
     ['LEO ' ARW ' GEO'],         struct()
@@ -35,10 +36,12 @@ examples = {
     'Kourou GTO',               struct('alt1', 250, 'apo1', 35786, 'elements', [6 0 178 0 0 0], ...
                                        'propulsion', 'chemical')
     'Small tank',               struct('mass0_kg', 1000, 'prop_chem_kg', 500, 'prop_ep_kg', 350)
-    'Monte Carlo',              struct('uncert', 'on', 'tof_max_h', 3300, 'preset', 'Propellant-critical')};
+    'Monte Carlo',              struct('uncert', 'on', 'tof_max_h', 3300, 'preset', 'Propellant-critical')
+    'Nodal drift',              struct('alt1', 500, 'alt2', 500, 'elements', [51.6 0 0 51.6 10 0], 'grav', 'j2', ...
+                                       'tof_max_h', 384, 'preset', 'Propellant-critical')};
 
 % ---- state shared by the nested callbacks
-prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; uncert = 'off';
+prop = 'both'; shape1 = 'circular'; shape2 = 'circular'; orient = 'relative'; vehicle = 'generic'; uncert = 'off'; grav = 'twobody';
 selected = ''; manual = false; order = {};
 lastM = []; lastOpts = []; lastRec = []; lastAdv = {};
 h = struct();
@@ -47,21 +50,27 @@ h = struct();
 fig = uifigure('Name', 'Orbital Manoeuvre Planner', 'Position', [40 40 1560 900]);
 if isprop(fig, 'Theme'), fig.Theme = 'light'; end
 fig.Color = T.bg;
-root = uigridlayout(fig, [2 1], 'RowHeight', {58, '1x'}, 'Padding', [0 0 0 0], ...
+root = uigridlayout(fig, [2 1], 'RowHeight', {62, '1x'}, 'Padding', [0 0 0 0], ...
                     'RowSpacing', 0, 'BackgroundColor', T.bg);
 
 % ---- top bar: brand + example missions
 nEx = size(examples, 1);
-topBar = uigridlayout(root, [1 4 + nEx], 'Padding', [20 12 20 12], 'ColumnSpacing', 8, ...
+% the course line sits under the title, so all the chips fit a 1536 px wide screen
+topBar = uigridlayout(root, [1 3], 'Padding', [20 10 20 10], 'ColumnSpacing', 8, ...
                       'BackgroundColor', T.surface);
-topBar.ColumnWidth = [{'fit', 'fit', '1x', 'fit'}, repmat({'fit'}, 1, nEx)];
-lbl(topBar, 'Orbital Manoeuvre Planner', 16, T.label, 'bold');
-lbl(topBar, ['ASE3004 ' MID ' Project 38 ' MID ' Satwik Sharma'], 12, T.label2);
+topBar.ColumnWidth = {'fit', '1x', 'fit'};
+brand = uigridlayout(topBar, [2 1], 'RowHeight', {'1x', '1x'}, 'Padding', [0 0 0 0], 'RowSpacing', 0, ...
+                     'BackgroundColor', T.surface);
+brandTitle = lbl(brand, 'Orbital Manoeuvre Planner', 16, T.label, 'bold'); brandTitle.VerticalAlignment = 'bottom';
+brandSub = lbl(brand, ['ASE3004 ' MID ' Project 38 ' MID ' Satwik Sharma'], 12, T.label2); brandSub.VerticalAlignment = 'top';
 lbl(topBar, '', 12, T.label2);
-lbl(topBar, 'Try a mission', 12.5, T.label2);
+chipRow = uigridlayout(topBar, [1 1 + nEx], 'Padding', [0 4 0 4], 'ColumnSpacing', 8, ...
+                       'BackgroundColor', T.surface);
+chipRow.ColumnWidth = repmat({'fit'}, 1, 1 + nEx);
+lbl(chipRow, 'Try a mission', 12.5, T.label2);
 h.chips = gobjects(1, nEx);
 for i = 1:nEx
-    h.chips(i) = uibutton(topBar, 'Text', examples{i, 1}, 'FontName', T.font, 'FontSize', 12.5, ...
+    h.chips(i) = uibutton(chipRow, 'Text', examples{i, 1}, 'FontName', T.font, 'FontSize', 12.5, ...
         'BackgroundColor', T.fill, 'FontColor', T.label, 'ButtonPushedFcn', @(~, ~) loadExample(i));
 end
 
@@ -74,7 +83,7 @@ left.RowHeight = {18, 128, 22, 128, 22, 38, 22, 208, 22, 208};
 if isprop(left, 'Scrollable'), left.Scrollable = 'on'; end
 
 groupTitle(left, 'Orbits');
-h.orbGrid = listPanel(left, 16);
+h.orbGrid = listPanel(left, 17);
 h.orientSeg = segRow(h.orbGrid, 'Orientation', {[DEL 'i'], 'Elements'}, {'relative', 'elements'}, @pickOrient);
 h.shape1 = shapeRow(h.orbGrid, 'Initial orbit', 1);
 [h.alt1, h.alt1Lbl] = numRow(h.orbGrid, 'Initial altitude', defaults.alt1, [0 Inf], 'km');
@@ -92,6 +101,7 @@ h.el(6) = numRow(h.orbGrid, 'Target arg. of periapsis', defEl(6), [0 360], 'deg'
 h.dw   = numRow(h.orbGrid, ['Target apse angle ' DEL char(969)], defaults.dw_deg, [0 360], 'deg');
 h.di   = numRow(h.orbGrid, 'Inclination change', defaults.di_deg, [0 180], 'deg');
 h.planes = lbl(h.orbGrid, '', 12.5, T.label2);
+h.gravSeg = segRow(h.orbGrid, 'Gravity', {'Two-body', 'J2'}, {'twobody', 'j2'}, @pickGrav);
 
 groupTitle(left, 'Constraints');
 g = listPanel(left, 3);
@@ -215,7 +225,7 @@ update(false);
         fn = fieldnames(v);
         for f = 1:numel(fn), d.(fn{f}) = v.(fn{f}); end
         h.alt1.Value = d.alt1; h.alt2.Value = d.alt2; h.di.Value = d.di_deg; h.dw.Value = d.dw_deg;
-        orient = 'relative';
+        orient = 'relative'; grav = d.grav;
         if ~isempty(d.elements)
             orient = 'elements';
             for q = 1:6, h.el(q).Value = d.elements(q); end
@@ -293,16 +303,25 @@ update(false);
         update(false);
     end
 
+    function pickGrav(v)
+        grav = v;
+        layoutOrbits();
+        highlightChip(0);
+        update(false);
+    end
+
     function layoutOrbits()
         % Rows of the Orbits card: orientation; shape, peri, apo, i, RAAN, argp (initial); the
         % same for the target; then dw and di (relative inputs) or the angle between the planes
+        % and the gravity (J2 needs each orbit's own inclination)
         e1 = strcmp(shape1, 'elliptical'); e2 = strcmp(shape2, 'elliptical'); el = strcmp(orient, 'elements');
-        rows = [1, 1 1 e1 el el el&&e1, 1 1 e2 el el el&&e2, ~el&&e2, ~el, el];
+        rows = [1, 1 1 e1 el el el&&e1, 1 1 e2 el el el&&e2, ~el&&e2, ~el, el, el];
         h.orbGrid.RowHeight = num2cell(40*rows);
-        rowObj = [h.apo1.Parent, h.el(1:3).Parent, h.apo2.Parent, h.el(4:6).Parent, h.dw.Parent, h.di.Parent, h.planes];
-        set(rowObj, {'Visible'}, arrayfun(@onOff, logical(rows([4:7, 10:16])), 'UniformOutput', false).');
+        rowObj = [h.apo1.Parent, h.el(1:3).Parent, h.apo2.Parent, h.el(4:6).Parent, h.dw.Parent, h.di.Parent, h.planes, ...
+                  h.gravSeg.buttons(1).Parent.Parent];
+        set(rowObj, {'Visible'}, arrayfun(@onOff, logical(rows([4:7, 10:17])), 'UniformOutput', false).');
         left.RowHeight{2} = 8 + 40*sum(rows);
-        setSeg(h.orientSeg, orient); setSeg(h.shape1, shape1); setSeg(h.shape2, shape2);
+        setSeg(h.orientSeg, orient); setSeg(h.shape1, shape1); setSeg(h.shape2, shape2); setSeg(h.gravSeg, grav);
         if e1, h.alt1Lbl.Text = 'Initial periapsis'; else, h.alt1Lbl.Text = 'Initial altitude'; end
         if e2, h.alt2Lbl.Text = 'Target periapsis'; else, h.alt2Lbl.Text = 'Target altitude'; end
     end
@@ -368,7 +387,8 @@ update(false);
             'dv_budget', h.dvb.Value, 'margin_pct', h.mrg.Value, 'tof_max_h', h.tof.Value, 'propulsion', prop, ...
             'isp_chem', h.ispc.Value, 'tw_chem', h.tw.Value, 'isp_ep', h.ispe.Value, 'accel_ep', h.acc.Value, ...
             'rb_max', h.rbm.Value, 'weights', w, 'uncertainty', strcmp(uncert, 'on'), 'sigma_isp_pct', h.sIsp.Value, ...
-            'sigma_thrust_pct', h.sThr.Value, 'sigma_point_deg', h.sPnt.Value, 'confidence_pct', h.conf.Value);
+            'sigma_thrust_pct', h.sThr.Value, 'sigma_point_deg', h.sPnt.Value, 'confidence_pct', h.conf.Value, ...
+            'j2', strcmp(orient, 'elements') && strcmp(grav, 'j2'));
         if strcmp(vehicle, 'spacecraft')    % the propellant on board can't weigh more than the spacecraft
             h.pc.Value = min(h.pc.Value, h.m0.Value); h.pe.Value = min(h.pe.Value, h.m0.Value - h.pc.Value);
             m = odst_mission('alt1', m.alt1, 'alt2', m.alt2, 'apo1', m.apo1, 'apo2', m.apo2, 'dw_deg', m.dw_deg, ...
@@ -377,7 +397,7 @@ update(false);
                 'rb_max', m.rb_max, 'weights', w, 'mass0_kg', h.m0.Value, 'thrust_chem_N', h.thr.Value, ...
                 'prop_chem_kg', h.pc.Value, 'power_ep_kW', h.pwr.Value, 'eff_ep', h.eff.Value, 'prop_ep_kg', h.pe.Value, ...
                 'uncertainty', m.uncertainty, 'sigma_isp_pct', m.sigma_isp_pct, 'sigma_thrust_pct', m.sigma_thrust_pct, ...
-                'sigma_point_deg', m.sigma_point_deg, 'confidence_pct', m.confidence_pct);
+                'sigma_point_deg', m.sigma_point_deg, 'confidence_pct', m.confidence_pct, 'j2', m.j2);
             h.derived.Text = sprintf('    T/W %.3g, electric thrust %.3g N', m.tw_chem, odst_ep_thrust(m));
         end
         [opts, rec, adv] = odst_evaluate(m);
@@ -430,7 +450,7 @@ update(false);
         vals = {sprintf('%.3f km/s', r.dv), odst_fmt_time(r.tof), burnsText(r.burns), prop, sprintf('%.2f', r.score_ws)};
         if m.uncertainty, vals{3} = sprintf('%d%%', floor(100*r.chance + 1e-9)); end
         for k2 = 1:5, h.stat(k2).Text = vals{k2}; end
-        h.vWhy.Text = [detailText(r, m) note sprintf(' %d of %d candidates meet your constraints.', ...
+        h.vWhy.Text = [detailText(r, m) j2Note(r) note sprintf(' %d of %d candidates meet your constraints.', ...
                        numel(f), numel(opts))];
     end
 
@@ -453,6 +473,12 @@ update(false);
                     status = [CHK ' Recommended'];
                 else
                     status = 'Feasible';
+                end
+                if strcmp(o.key, 'nodal_drift')
+                    status = sprintf('%s %s wait %s at %s km', status, MID, odst_fmt_time(o.params.wait_days*86400), commas(o.params.alt_d));
+                elseif ~isnan(o.j2_dv) && abs(o.j2_dv) >= 5e-4
+                    sg = '+'; if o.j2_dv < 0, sg = char(8722); end
+                    status = sprintf('%s %s J2 %s%s', status, MID, sg, fmtV(o.j2_dv));
                 end
             else
                 score = '-'; tops = '-'; status = o.reasons;
@@ -528,7 +554,7 @@ update(false);
         end
         if m.tof_max_h > xl(1) && m.tof_max_h < xl(2)
             xline(ax, m.tof_max_h, '--', 'Time limit', 'Color', T.bad, 'LineWidth', 1, 'FontSize', 10, ...
-                  'LabelVerticalAlignment', 'bottom', 'FontName', T.font);
+                  'LabelVerticalAlignment', 'bottom', 'LabelHorizontalAlignment', 'left', 'FontName', T.font);
         end
         ax.XScale = 'log'; xlim(ax, xl); ylim(ax, [0 ytop]);
         ticks = [1/60 1/6 1 6 24 240 2400 8766 87660];
@@ -545,7 +571,7 @@ update(false);
         ax = h.axGeo; m = lastM; opts = lastOpts;
         o = opts(strcmp({opts.key}, selected));
         if isempty(o), o = opts(1); end
-        h.export.Enable = onOff(o.applicable && ~isempty(o.vplan));     % low thrust has no burns to export
+        h.export.Enable = onOff(o.applicable && (~isempty(o.vplan) || strcmp(o.key, 'nodal_drift')));   % low thrust has no burns
         r1 = C.RE + m.alt1; r2 = C.RE + m.alt2; k = 1e-3;
         ra1 = C.RE + max(m.alt1, m.apo1); ra2 = C.RE + max(m.alt2, m.apo2);   % max ignores NaN
         ell = any(strcmp({opts.key}, 'apse'));
@@ -565,13 +591,22 @@ update(false);
         end
         c = T.series.(o.key);
         [a, b] = splitName(o.name);
-        if isempty(b), h.geoTitle.Text = a; else, h.geoTitle.Text = [a ', ' lower(b(1)) b(2:end)]; end
+        if isempty(b), h.geoTitle.Text = a;
+        elseif numel(b) > 1 && ~isstrprop(b(2), 'lower'), h.geoTitle.Text = [a ', ' b];       % an acronym, as J2
+        else, h.geoTitle.Text = [a ', ' lower(b(1)) b(2:end)]; end
         if strcmp(o.key, 'low_thrust')
             f = linspace(0, 1, 700); rr = r1 + (r2 - r1)*f; aa = 12*pi*f;      % 6 turns drawn
             X = k*rr.*cos(aa); Y = k*rr.*sin(aa); bi = [];
             v1 = sqrt(C.MU/r1); v2 = sqrt(C.MU/r2);
             revs = abs(v1^4 - v2^4)/(8*pi*C.MU*m.accel_ep*1e-3);
             h.geoSub.Text = sprintf('Schematic spiral: 6 turns drawn, about %s in flight.', commas(revs));
+        elseif strcmp(o.key, 'nodal_drift') && o.applicable
+            rd = C.RE + o.params.alt_d;
+            plot(ax, k*rd*cos(th), k*rd*sin(th), ':', 'Color', T.orbit, 'LineWidth', 1.2);
+            [X, Y, bi] = nodalPath(r1, rd, r2, o);
+            r2 = max(r2, rd);                                    % for the axis limits below
+            h.geoSub.Text = sprintf('Top view in 10^3 km. Dotted: %s km parking orbit, %s wait (3/4 turn drawn).', ...
+                                    commas(o.params.alt_d), odst_fmt_time(o.params.wait_days*86400));
         elseif ell && ~o.applicable
             X = []; Y = []; bi = [];
             h.geoSub.Text = ['Not available: ' o.note '.'];
@@ -596,13 +631,15 @@ update(false);
         axis(ax, 'equal'); xlim(ax, [-lim lim]); ylim(ax, [-lim lim]);
         xlabel(ax, 'x [10^3 km]'); ylabel(ax, 'y [10^3 km]');
         ln = plot(ax, NaN, NaN, 'Color', c, 'LineWidth', 2.2);
-        mk = gobjects(0); tx = gobjects(0);
+        mk = gobjects(0); tx = gobjects(0); ha2 = {'left', 'center'};
         for q = 1:numel(bi)
             mk(q) = plot(ax, X(bi(q)), Y(bi(q)), 'o', 'MarkerSize', 8, 'MarkerFaceColor', c, ...
                          'MarkerEdgeColor', T.surface, 'LineWidth', 1.5, 'Visible', 'off');
-            tx(q) = text(ax, X(bi(q)), Y(bi(q)), sprintf('  %sv%d', DEL, q), 'Color', T.label2, ...
+            % the nodal path's burn low on the orbit: centred above the point, clear of the wait arc
+            low = strcmp(o.key, 'nodal_drift') && Y(bi(q)) < -0.5*hypot(X(bi(q)), Y(bi(q)));
+            tx(q) = text(ax, X(bi(q)), Y(bi(q)) + low*0.07*lim, sprintf('%s%sv%d', blanks(2*~low), DEL, q), 'Color', T.label2, ...
                          'FontSize', 11, 'FontWeight', 'bold', 'FontName', T.font, ...
-                         'VerticalAlignment', 'bottom', 'Visible', 'off');
+                         'HorizontalAlignment', ha2{1 + low}, 'VerticalAlignment', 'bottom', 'Visible', 'off');
         end
         if numel(X) > 1
             s = [0, cumsum(hypot(diff(X), diff(Y)))];
@@ -662,9 +699,67 @@ update(false);
     end
 
 % ================================================================ text helpers
+    function [X, Y, bi] = nodalPath(r1, rd, r2, o)
+        % Hohmann out, three quarters of a turn for the wait (so the four burns sit apart), Hohmann on (in 10^3 km),
+        % and each burn's point
+        k2 = 1e-3; R = r1; A = 0;
+        arc = @(ra, rb, t0) halfEllipse(ra, rb, t0);
+        if abs(rd - r1) > 1e-6, [rr, aa] = arc(r1, rd, 0); R = [R, rr(2:end)]; A = [A, aa(2:end)]; end
+        i1 = numel(R); t1 = A(end);
+        aa = t1 + 1.5*pi*(1:120)/120; R = [R, rd*ones(1, 120)]; A = [A, aa];
+        iW = numel(R);
+        if abs(r2 - rd) > 1e-6, [rr, aa] = arc(rd, r2, t1 + 1.5*pi); R = [R, rr(2:end)]; A = [A, aa(2:end)]; end
+        X = k2*R.*cos(A); Y = k2*R.*sin(A);
+        [~, ~, ~, h1] = odst_hohmann(r1, rd, 0); tA = h1(end, 1); tW = tA + o.params.wait_days*86400;
+        bi = zeros(1, size(o.plan, 1));
+        for q = 1:size(o.plan, 1)
+            t = o.plan(q, 1);
+            if t <= 0, bi(q) = 1; elseif abs(t - tA) < 1, bi(q) = i1; elseif abs(t - tW) < 1, bi(q) = iW; else, bi(q) = numel(R); end
+        end
+    end
+
+    function [rr, aa] = halfEllipse(ra, rb, t0)
+        % half a transfer ellipse from radius ra at angle t0 to radius rb, 220 points
+        aa = t0 + pi*(0:220)/220;
+        rp = min(ra, rb); rq = max(ra, rb); w = t0; if rb < ra, w = t0 + pi; end
+        p = 2*rp*rq/(rp + rq); e = (rq - rp)/(rq + rp);
+        rr = p./(1 + e*cos(aa - w));
+    end
+
+    function s = fmtV(x)
+        if abs(x) < 1, s = sprintf('%.1f m/s', 1e3*abs(x)); else, s = sprintf('%.3f km/s', abs(x)); end
+    end
+
+    function s = j2Note(o)
+        % what J2 did to the plan
+        s = '';
+        if strcmp(o.key, 'low_thrust') && isfield(o.params, 'corrections') && o.params.corrections > 0
+            s = sprintf(' J2 turns the planes apart during the spiral: %d low-thrust plane change%s at the target orbit add %s.', ...
+                        o.params.corrections, repmat('s', 1, o.params.corrections > 1), fmtV(o.j2_dv));
+        elseif ~isnan(o.j2_dv) && abs(o.j2_dv) >= 5e-4
+            w = 'adds'; if o.j2_dv < 0, w = 'saves'; end
+            s = sprintf(' The plan aims for where J2 will have turned the target''s plane on arrival, which %s %s.', w, fmtV(o.j2_dv));
+        end
+    end
+
     function s = detailText(o, m)
         p = o.params;
         switch o.key
+            case 'nodal_drift'
+                wait = odst_fmt_time(p.wait_days*86400);
+                if abs(p.alt_d - m.alt1) < 0.5
+                    s = sprintf('Wait %s on the start orbit', wait);
+                elseif p.alt_d > m.alt1
+                    s = sprintf('Climb to a %s km parking orbit and wait %s', commas(p.alt_d), wait);
+                else
+                    s = sprintf('Drop to a %s km parking orbit and wait %s', commas(p.alt_d), wait);
+                end
+                s = sprintf(['%s: there its node moves %.2f%s/day against the target''s, closing the %.4g%s gap between them. ' ...
+                             'Then a Hohmann transfer to the target'], s, abs(p.rate_deg_day), DEG, abs(p.gap_deg), DEG);
+                if p.di_deg > 0.005
+                    s = sprintf('%s, with the %.4g%s inclination change on the node line', s, p.di_deg, DEG);
+                end
+                s = [s '.'];
             case 'hohmann_split'
                 s = sprintf('Split the %g%s plane change: %.2f%s at departure and %.2f%s at arrival.', ...
                     m.di_deg, DEG, p.split_at_r1*m.di_deg, DEG, (1 - p.split_at_r1)*m.di_deg, DEG);
@@ -718,6 +813,7 @@ update(false);
             case 'one_tangent',   n = 'One-tangent';
             case 'apse',          n = 'Apse-to-apse';
             case 'lambert',       n = 'Lambert';
+            case 'nodal_drift',   n = 'Nodal drift';
             otherwise,            n = 'Low-thrust';
         end
     end
